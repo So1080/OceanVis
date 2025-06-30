@@ -1,0 +1,164 @@
+import cv2
+import numpy as np
+import mediapipe as mp
+import time
+from playsound import playsound
+import threading
+from pathlib import Path
+import pygame
+
+MAP_IMAGE_PATH = "map_reference.jpg"
+CAMERA_INDEX = 1
+COLOR_THRESH = 60
+pygame.mixer.init()
+
+SOUNDS = {
+    'blue': 'ocean_blue.mp3',
+    'red': 'sand_red.mp3',
+    'beige': 'sand_beige.mp3'
+}
+
+SOUNDS_PYGAME = {
+    'blue': pygame.mixer.Sound('ocean_blue.mp3'),
+    'red': pygame.mixer.Sound('sand_red.mp3'),
+    'beige': pygame.mixer.Sound('sand_beige.mp3')
+}
+
+current_channel = pygame.mixer.Channel(0)
+
+TARGET_COLORS = {
+    'blue': np.array([204, 251, 142]),   #BGR
+    'red': np.array([93, 106, 234]),
+    'beige': np.array([192, 230, 248]) 
+}
+
+def play_sound_threaded(sound_file):
+    threading.Thread(target=playsound, args=(sound_file,), daemon=True).start()
+
+ref_img_color = cv2.imread(MAP_IMAGE_PATH, cv2.IMREAD_COLOR)
+ref_img_gray = cv2.cvtColor(ref_img_color, cv2.COLOR_BGR2GRAY)
+
+if ref_img_color is None:
+    print(f"Error: Could not load {MAP_IMAGE_PATH}")
+    exit()
+
+h_map, w_map, _ = ref_img_color.shape
+
+orb = cv2.ORB_create(1000)
+kp1, des1 = orb.detectAndCompute(ref_img_gray, None)
+bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+
+cap = cv2.VideoCapture(CAMERA_INDEX)
+time.sleep(2)
+
+print("[INFO] Finding map position in camera frame...")
+success, frame = cap.read()
+gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+kp2, des2 = orb.detectAndCompute(gray_frame, None)
+
+matches = bf.match(des1, des2)
+matches = sorted(matches, key=lambda x: x.distance)
+
+good_matches = matches[:50]
+src_pts = np.float32([kp1[m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+dst_pts = np.float32([kp2[m.trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+
+M, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
+if M is None:
+    print("[ERROR] Could not find map in the camera view.")
+    exit()
+
+pts = np.float32([[0, 0], [0, h_map], [w_map, h_map], [w_map, 0]]).reshape(-1, 1, 2)
+dst = cv2.perspectiveTransform(pts, M)
+dst_int = np.int32(dst)
+
+inv_M = np.linalg.inv(M)
+
+print("[INFO] Map detected and locked.")
+
+mpHands = mp.solutions.hands
+hands = mpHands.Hands(max_num_hands=1)
+mpDraw = mp.solutions.drawing_utils
+
+pTime = 0
+last_detected_color = None
+
+while True:
+    success, img = cap.read()
+    if not success:
+        break
+
+    imgRGB = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    results = hands.process(imgRGB)
+
+    cv2.polylines(img, [dst_int], True, (255, 0, 0), 3)
+
+    if results.multi_hand_landmarks:
+        for handLms in results.multi_hand_landmarks:
+            h_frame, w_frame, _ = img.shape
+
+            for id, lm in enumerate(handLms.landmark):
+                cx, cy = int(lm.x * w_frame), int(lm.y * h_frame)
+
+                if id == 8:  # Index fingertip
+                    cv2.circle(img, (cx, cy), 10, (0, 255, 0), cv2.FILLED)
+
+                    inside = cv2.pointPolygonTest(dst, (cx, cy), False)
+                    if inside >= 0:
+                        finger_point = np.array([[cx], [cy], [1]])
+                        map_point = np.dot(inv_M, finger_point)
+                        map_point /= map_point[2]
+
+                        mx, my = map_point[0][0], map_point[1][0]
+                        relative_x = int(mx)
+                        relative_y = int(my)
+
+                        if 0 <= relative_x < w_map and 0 <= relative_y < h_map:
+                            color_at_point = ref_img_color[relative_y, relative_x]  # BGR
+
+                            detected_color = None
+                            for name, target_bgr in TARGET_COLORS.items():
+                                diff = np.linalg.norm(color_at_point - target_bgr)
+                                if diff < COLOR_THRESH:
+                                    detected_color = name
+                                    break
+
+                            if detected_color:
+                                cv2.putText(img, f"{detected_color}!", (50, 150),
+                                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
+
+                                # Play sound only if changed
+                                if detected_color != last_detected_color:
+                                    current_channel.stop()
+                                    # sound_file = SOUNDS.get(detected_color)
+                                    sound_file = SOUNDS_PYGAME.get(detected_color)
+                                    print(f"[INFO] Detected color: {detected_color} at ({relative_x}, {relative_y}) withe file name: {sound_file}")
+                                    if sound_file:
+                                        # sound_file = sound_file.replace(" ", "%20")
+                                        # play_sound_threaded(sound_file)
+                                        # playsound(sound_file)
+                                        current_channel.play(SOUNDS_PYGAME[detected_color])
+                                    last_detected_color = detected_color
+                            else:
+                                last_detected_color = None
+
+                            print(f"[INFO] Map pos: ({relative_x}, {relative_y}) Color: {detected_color}")
+                        else:
+                            current_channel.stop()
+                            last_detected_color = None
+
+            mpDraw.draw_landmarks(img, handLms, mpHands.HAND_CONNECTIONS)
+
+    cTime = time.time()
+    fps = 1 / (cTime - pTime) if cTime != pTime else 0
+    pTime = cTime
+
+    cv2.putText(img, f'FPS: {int(fps)}', (10, 50),
+                cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 255), 2)
+
+    cv2.imshow("Map with Sound", img)
+    if cv2.waitKey(1) & 0xFF == 27:
+        break
+
+cap.release()
+cv2.destroyAllWindows()
