@@ -95,12 +95,12 @@ MASKS_ID8 = {
 }
 
 MAP_CONFIG = {
-    10: {'image': MAP_IMAGE_ID10, 'masks': MASKS_ID10},
+    11: {'image': MAP_IMAGE_ID10, 'masks': MASKS_ID10},
     9: {'image': MAP_IMAGE_ID9, 'masks': MASKS_ID9},
     2: {'image': MAP_IMAGE_ID8, 'masks': MASKS_ID8},
 }
 
-ACTIVE_MAP_ID = 10
+ACTIVE_MAP_ID = 11
 MAP_IMAGE = MAP_IMAGE_ID10
 MASKS = MASKS_ID10
 
@@ -160,7 +160,7 @@ while True:
     print(f"Detected marker IDs: {ids.flatten() if ids is not None else 'None'}")
     current_h_matrix = None
 
-    HOMOGRAPHY_MARKER_IDS = [2, 9, 10]
+    HOMOGRAPHY_MARKER_IDS = [2, 9, 11]
 
     MIN_MARKER_SIZE_PX = 20
     
@@ -197,7 +197,7 @@ while True:
         
     current_h_matrix = None
 
-    HOMOGRAPHY_MARKER_IDS = [2, 9, 10]
+    HOMOGRAPHY_MARKER_IDS = [2, 9, 11]
 
     if ids is not None and len(ids) > 0:
         for i, marker_id in enumerate(ids.flatten()):
@@ -230,7 +230,7 @@ while True:
                             [MAP_W, 492],
                             [MAP_W-490, 492]
                         ], dtype=np.float32)
-                    elif marker_id == 10:
+                    elif marker_id == 11:
                         map_marker_pts = np.array([
                             [MAP_W - 277, 0],       # top-left #or 508 #or 281 #MAP_W - 281, 0
                             [MAP_W, 0],             # top-right #MAP_W, 0
