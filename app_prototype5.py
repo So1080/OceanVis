@@ -30,6 +30,11 @@ SOUNDS = {
     "red_caption": pygame.mixer.Sound("sounds/Habitat Descriptions - Rippled Sand.wav"),
     "beige_caption": pygame.mixer.Sound("sounds/Habitat Descriptions - Flat Sand.wav"),
 
+    "blue_caption_narrator": pygame.mixer.Sound("sounds/Habitat_Legend-NarratorONLY-Sparse_Live_Bottom.wav"),
+    "green_caption_narrator": pygame.mixer.Sound("sounds/Habitat_Legend-NarratorONLY-Dense_Live_Bottom.wav"),
+    "red_caption_narrator": pygame.mixer.Sound("sounds/Habitat_Legend-NarratorONLY-Rippled_Sand.wav"),
+    "beige_caption_narrator": pygame.mixer.Sound("sounds/Habitat_Legend-NarratorONLY-Flat_Sand.wav"),
+
     "correct": pygame.mixer.Sound("sounds/right_2.mp3"),
     "wrong": pygame.mixer.Sound("sounds/wrong.mp3"),
 }
@@ -285,6 +290,10 @@ while True:
                             CHANNEL.play(SOUNDS[detected_color])
                         else:
                             CHANNEL.play(SOUNDS[detected_color])
+                    if detected_color and ACTIVE_MAP_ID == 2:
+                        if "caption" in detected_color:
+                            caption_narrator_key = f"{detected_color}_narrator"
+                            CHANNEL.play(SOUNDS[caption_narrator_key])
                     last_color = detected_color
             else:
                 finger_pos_history = []
