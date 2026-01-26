@@ -1,0 +1,698 @@
+import cv2
+import cv2.aruco as aruco
+import numpy as np
+import mediapipe as mp
+import pygame
+import os
+import time
+
+import csv
+from datetime import datetime
+
+# -----------------------------
+# 0. DATA COLLECTION
+# -----------------------------
+
+def log_selections(selected_indices):
+    date_str = datetime.now().strftime("%Y-%m-%d")
+    filename = f"selections_{date_str}.csv"
+    
+    file_exists = os.path.isfile(filename)
+    
+    user_id = datetime.now().strftime("%H%M%S")
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    with open(filename, mode='a', newline='') as file:
+        writer = csv.writer(file)
+        
+        # Write header if new file
+        if not file_exists:
+            writer.writerow(["Timestamp", "User_ID", "Sparse_Live_Bottom", "Dense_Live_Bottom", "Flat_Sand", "Rippled_Sand"])
+        
+        # Write the data row
+        writer.writerow([
+            timestamp,
+            user_id,
+            selected_indices["Sparse live bottom"],
+            selected_indices["Dense live bottom"],
+            selected_indices["Flat sand"],
+            selected_indices["Rippled sand"]
+        ])
+    print(f"Data logged successfully to {filename}")
+
+# -----------------------------
+# 1. SETUP & ASSET DEFINITIONS
+# -----------------------------
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+pygame.init()
+pygame.mixer.init()
+
+MAX_HANDS = 1 
+HAND_CHANNELS = [pygame.mixer.Channel(i) for i in range(MAX_HANDS)]
+ANIMAL_CHANNEL = pygame.mixer.Channel(MAX_HANDS) 
+
+DESCRIPTIONS = {
+    "Sparse live bottom": "sounds/Habitat_Legend-NarratorONLY-Sparse_Live_Bottom.wav",
+    "Dense live bottom": "sounds/Habitat_Legend-NarratorONLY-Dense_Live_Bottom.wav",
+    "Rippled sand": "sounds/Habitat_Legend-NarratorONLY-Rippled_Sand.wav",
+    "Flat sand": "sounds/Habitat_Legend-NarratorONLY-Flat_Sand.wav",
+}
+
+SOUND_OPTIONS = {
+    "Sparse live bottom": [
+        "Sounds_VF/BASIC_v3/BASIC-BASIC-sparse-live-8bars.wav",
+        "Sounds_VF/COMPLEX/HabitatSynthSounds v4 C Short Loop - Sparse Live Bottom.wav",
+        "Sounds_VF/SPEECH_US_v1_x8_REPEATS/Sparse-x8-100percent-USA_v1.aif"
+    ],
+    "Dense live bottom": [
+        "Sounds_VF/BASIC_v3/BASIC-BASIC-dense-live-8bars-v3.wav",
+        "Sounds_VF/COMPLEX/HabitatSynthSounds v4 C Short Loop - Dense Live Bottom.wav",
+        "Sounds_VF/SPEECH_US_v1_x8_REPEATS/Dense-x8-100percent-USA_v1.aif"
+    ],
+    "Flat sand": [
+        "Sounds_VF/BASIC_v3/BASIC-BASIC-flat-sand-8bars-v3.wav",
+        "Sounds_VF/COMPLEX/HabitatSynthSounds v4 C Short Loop - Flat Sand.wav",
+        "Sounds_VF/SPEECH_US_v1_x8_REPEATS/Flat-x8-100percent-USA_v1.aif"
+    ],
+    "Rippled sand": [
+        "Sounds_VF/BASIC_v3/BASIC-BASIC-rippled-sand-8bars-v3.wav",
+        "Sounds_VF/COMPLEX/HabitatSynthSounds v4 C Short Loop - Rippled Sand.wav",
+        "Sounds_VF/SPEECH_US_v1_x8_REPEATS/Rippled-x8-100percent-USA_v1.aif"
+    ]
+}
+
+# UPDATED: Mask mapping to match your hardware/map setup
+MASK_TO_HABITAT = {
+    "blue": "Sparse live bottom",
+    "green": "Dense live bottom",
+    "red": "Flat sand",        
+    "beige": "Rippled sand"    
+}
+
+HABITATS_ORDER = ["Sparse live bottom", "Dense live bottom", "Flat sand", "Rippled sand"]
+selected_indices = {h: 0 for h in HABITATS_ORDER}
+FINAL_SOUNDS = {}
+
+# Animal logic updated to match the new habitat colors
+ANIMAL_HABITATS = {
+    9: ["blue"],               # coral  
+    4: ["blue", "red"],        # crab
+    5: ["green"],              # turtle
+    6: ["red", "beige"],       # ray
+    7: ["blue"],               # anemone
+    8: ["red", "beige"]        # shell
+}
+
+UI_COLORS = {
+    "Sparse live bottom": (95, 254, 201),    # Blue
+    "Dense live bottom": (0, 68, 52),     # Green
+    "Flat sand": (254, 89, 84),             # Red
+    "Rippled sand": (252, 229, 185)       # Beige
+}
+
+# -----------------------------
+# PHASE 1: SELECTION MENU
+# -----------------------------
+def run_selection_menu():
+    screen = pygame.display.set_mode((800, 500))
+    pygame.display.set_caption("Habitat Sound Selection")
+    font = pygame.font.SysFont("Arial", 32)
+    small_font = pygame.font.SysFont("Arial", 24)
+    italic_font = pygame.font.SysFont("Arial", 24, italic=True)
+    
+    current_idx = 0
+    running = True
+
+    last_hab_idx = -1
+    is_description_playing = False
+    
+    while running:
+
+        hab_name = HABITATS_ORDER[current_idx]
+
+        # 1. AUTO-PLAY DESCRIPTION (Speech)
+        if current_idx != last_hab_idx:
+            pygame.mixer.stop()
+            # Plays the 3rd index (the speech file) from your SOUND_OPTIONS
+            description_sound = pygame.mixer.Sound(DESCRIPTIONS[hab_name])
+            description_sound.play()
+            is_description_playing = True
+            last_hab_idx = current_idx
+
+        if not pygame.mixer.get_busy():
+            pygame.mixer.Sound(SOUND_OPTIONS[hab_name][0]).play()
+            is_description_playing = False
+
+        screen.fill((30, 30, 30))
+
+        # 2. DRAW COLOR SQUARE
+        # Draws a 100x100 square representing the habitat color
+        rect_color = UI_COLORS.get(hab_name, (255, 255, 255))
+        pygame.draw.rect(screen, rect_color, (600, 200, 100, 100))
+        pygame.draw.rect(screen, (255, 255, 255), (600, 200, 100, 100), 2) # Border
+        
+        title = font.render(f"Select Sound for: {hab_name.upper()}", True, (255, 255, 255))
+        screen.blit(title, (50, 50))
+
+        if is_description_playing:
+            status_txt = "Listening to description... Press [R] to skip"
+            status_color = (255, 165, 0)
+        else:
+            status_txt = "Press [1, 2, 3] to Listen | [ENTER] to Confirm"
+            status_color = (0, 200, 255)
+        
+        for i in range(3):
+            text_color = (100, 100, 100) if is_description_playing else (150, 150, 150)
+            text_color = (243, 164, 16) if not is_description_playing and selected_indices[hab_name] == i else (150, 150, 150)
+            txt = f"Option {i+1}" + ("  <-- Playing" if not is_description_playing and selected_indices[hab_name] == i else "")
+            txt_font = italic_font if not is_description_playing and selected_indices[hab_name] == i else small_font
+            screen.blit(txt_font.render(txt, True, text_color), (100, 150 + (i * 60)))
+            
+        screen.blit(small_font.render(status_txt, True, status_color), (50, 400))
+        pygame.display.flip()
+        
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit(); exit()
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_r:
+                    pygame.mixer.stop()
+                    is_description_playing = False
+                    pygame.mixer.Sound(SOUND_OPTIONS[hab_name][0]).play()
+                if not is_description_playing:
+                    if event.key in [pygame.K_1, pygame.K_2, pygame.K_3]:
+                        val = int(event.unicode) - 1
+                        selected_indices[hab_name] = val
+                        pygame.mixer.stop()
+                        pygame.mixer.Sound(SOUND_OPTIONS[hab_name][val]).play()
+                    if event.key == pygame.K_RETURN:
+                        pygame.mixer.stop()
+                        if current_idx < len(HABITATS_ORDER) - 1: 
+                            current_idx += 1
+                        else: running = False
+
+    # Link chosen sounds to mask keys
+    for mask_key, hab_name in MASK_TO_HABITAT.items():
+        FINAL_SOUNDS[mask_key] = pygame.mixer.Sound(SOUND_OPTIONS[hab_name][selected_indices[hab_name]])
+    
+    FINAL_SOUNDS["correct"] = pygame.mixer.Sound("sounds/right_2.mp3")
+    FINAL_SOUNDS["wrong"] = pygame.mixer.Sound("sounds/wrong.mp3")
+    pygame.display.quit()
+
+# -----------------------------
+# PHASE 2: PAUSE
+# -----------------------------
+def run_pause_menu():
+    screen = pygame.display.set_mode((800, 500))
+    pygame.display.set_caption("PAUSE")
+    font = pygame.font.SysFont("Arial", 32)
+
+    small_font = pygame.font.SysFont("Arial", 24)
+    running = True
+    while running:
+        screen.fill((30, 30, 30))        
+        title = font.render(f"Thank you for selecting the sounds!", True, (255, 255, 255))
+        screen.blit(title, (50, 100))
+        screen.blit(small_font.render("Please let the researcher know you are done with the first part", True, (255, 255, 255)), (50, 200))
+        screen.blit(small_font.render("Researcher: Press [Q]", True, (255, 255, 255)), (300, 400))
+        pygame.display.flip()
+
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                    pygame.quit(); exit()
+            if event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_q:
+                        running = False
+    pygame.display.quit()
+
+
+# -----------------------------
+# PHASE 3: COMPUTER VISION
+# -----------------------------
+
+
+def run_cv_activity():
+    cap = cv2.VideoCapture(1)
+
+    
+    time.sleep(1.0)
+
+    if not cap.isOpened():
+        print("Error: Could not open camera. Trying index 0...")
+        cap = cv2.VideoCapture(0)
+        if not cap.isOpened(): return
+        
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+    
+    # --- SMOOTHING ADJUSTMENT ---
+    # Increase this (e.g., 10-15) for very smooth/slow movement.
+    # Decrease this (e.g., 2-3) for instant/jittery movement.
+    SMOOTHING_FACTOR = 8 
+
+    ARUCO_DICT = aruco.getPredefinedDictionary(aruco.DICT_4X4_50)
+    PARAMS = aruco.DetectorParameters()
+    mpHands = mp.solutions.hands
+    hands = mpHands.Hands(max_num_hands=MAX_HANDS, min_detection_confidence=0.7)
+    mpDraw = mp.solutions.drawing_utils 
+
+    MAP_CONFIG = {
+        11: {'image': cv2.imread("craved_map/craved_map1.jpeg"), 'masks': {k: cv2.imread(f"craved_map/masks/{k}_mask.png", 0) for k in ['blue', 'green', 'red', 'beige']}}, 
+        9: {'image': cv2.imread("craved_map2/Frame 7_id9.png"), 'masks': {k: cv2.imread(f"craved_map2/masks/{k}_mask.png", 0) for k in ['blue', 'green', 'red', 'beige']}},
+        3: {'image': cv2.imread("craved_map3/Frame 8_id8.png"), 'masks': {k: cv2.imread(f"craved_map3/masks/{k}_mask.png", 0) for k in ['blue', 'green', 'red', 'beige']}},
+        4: {'image': cv2.imread("map_6x4/map_6x4.jpeg"), 'masks': {k: cv2.imread(f"map_6x4/masks/{k}_mask.png", 0) for k in ['blue', 'green', 'red', 'beige']}},
+        20: {'image': cv2.imread("map_coop_id20/map_game_id20.jpeg"), 'masks': {k: cv2.imread(f"map_coop_id20/masks/{k}_mask.png", 0) for k in ['blue', 'green', 'red', 'beige']}}
+    }
+
+    map_image = None
+    masks = None
+    map_h = map_w = 0
+    h_matrix_history = []
+    averaged_h_matrix = None
+    last_marker_id = None
+    # Track position history for smoothing
+    hand_states = {0: {'last_color': None, 'channel': HAND_CHANNELS[0], 'pos_history': []}}
+    last_animal_position = {}
+    print("Starting CV Activity... Press ESC to exit.")
+
+    while True:
+        ret, frame = cap.read()
+        # if not ret:
+        #     print("Failed to grab frame.")
+        #     break
+
+        if not ret:
+            cv2.waitKey(10)
+            continue
+        
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        corners, ids, _ = aruco.detectMarkers(gray, ARUCO_DICT, parameters=PARAMS)
+
+        if ids is not None:
+            for i, m_id in enumerate(ids.flatten()):
+                if m_id in MAP_CONFIG:
+                    if last_marker_id != m_id:
+                        map_image = MAP_CONFIG[m_id]['image']
+                        masks = MAP_CONFIG[m_id]['masks']
+                        map_h, map_w, _ = map_image.shape
+                        last_marker_id = m_id
+                        h_matrix_history = []
+
+                    # Marker coordinate setup
+                    if m_id in [3, 9, 11]:
+                        size = 490 if m_id != 11 else 277
+                        m_pts = np.array([[map_w-size, 0], [map_w, 0], [map_w, size], [map_w-size, size]], dtype=np.float32)
+                    elif m_id in [4, 20]:
+                        m_pts = np.array([[map_w-344, 30], [map_w-42, 30], [map_w-42, 338], [map_w-344, 338]], dtype=np.float32)
+
+                    h_curr, _ = cv2.findHomography(corners[i][0], m_pts)
+                    if h_curr is not None:
+                        h_matrix_history.append(h_curr)
+                        if len(h_matrix_history) > 5: h_matrix_history.pop(0)
+                        averaged_h_matrix = np.mean(h_matrix_history, axis=0)
+                    
+                    # VISIBILITY: Draw ArUco marker box on camera frame
+                    cv2.polylines(frame, [corners[i][0].astype(int)], True, (0, 255, 0), 2)
+                    break
+
+        # VISIBILITY: Draw Map Boundary in Camera View
+        if averaged_h_matrix is not None and map_image is not None:
+            try:
+                map_outline = np.float32([[0, 0], [map_w, 0], [map_w, map_h], [0, map_h]]).reshape(-1, 1, 2)
+                h_inv = cv2.invert(averaged_h_matrix)[1]
+                cam_outline = cv2.perspectiveTransform(map_outline, h_inv)
+                cv2.polylines(frame, [np.int32(cam_outline)], True, (255, 0, 0), 3)
+            except: pass
+
+        map_display = map_image.copy() if map_image is not None else np.zeros((480, 854, 3), dtype=np.uint8)
+
+        # Finger Detection & Smoothed Visibility
+        results = hands.process(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+        if results.multi_hand_landmarks and averaged_h_matrix is not None:
+            hand_lms = results.multi_hand_landmarks[0]
+            # VISIBILITY: Draw hand skeleton on camera frame
+            mpDraw.draw_landmarks(frame, hand_lms, mpHands.HAND_CONNECTIONS)
+            
+            # Index tip detection
+            tip = hand_lms.landmark[mpHands.HandLandmark.INDEX_FINGER_TIP]
+            cx, cy = int(tip.x * frame.shape[1]), int(tip.y * frame.shape[0])
+            
+            # Transform to map space
+            pt = np.array([[[cx, cy]]], dtype=np.float32)
+            pt_t = cv2.perspectiveTransform(pt, averaged_h_matrix)[0][0]
+            mx, my = int(pt_t[0]), int(pt_t[1])
+
+            # APPLY SMOOTHING
+            hand_states[0]['pos_history'].append((mx, my))
+            if len(hand_states[0]['pos_history']) > SMOOTHING_FACTOR:
+                hand_states[0]['pos_history'].pop(0)
+            
+            # Calculate averaged position
+            avg_mx, avg_my = np.mean(hand_states[0]['pos_history'], axis=0).astype(int)
+
+            # VISIBILITY: Show tracking circles
+            cv2.circle(frame, (cx, cy), 10, (0, 0, 255), -1) # On camera
+            cv2.circle(map_display, (avg_mx, avg_my), 40, (255, 0, 255), -1) # On digital map
+
+            detected = None
+            if masks and 0 <= avg_my < map_h and 0 <= avg_mx < map_w:
+                for key, mask in masks.items():
+                    if mask[avg_my, avg_mx] > 0:
+                        detected = key; break
+
+            if detected != hand_states[0]['last_color']:
+                hand_states[0]['channel'].stop()
+                if detected in FINAL_SOUNDS: 
+                    hand_states[0]['channel'].play(FINAL_SOUNDS[detected], loops=-1)
+                hand_states[0]['last_color'] = detected
+        else:
+            hand_states[0]['channel'].stop()
+            hand_states[0]['last_color'] = None
+            hand_states[0]['pos_history'] = []
+
+        # Display Logic
+        if map_image is not None:
+            f_h, f_w, _ = frame.shape
+            scale = 720 / f_h
+            resized_f = cv2.resize(frame, (int(f_w * scale), 720))
+            resized_m = cv2.resize(map_display, (int(map_w * (720 / map_h)), 720))
+            combined = np.hstack((resized_f, resized_m))
+        else:
+            combined = cv2.resize(frame, (1280, 720))
+
+        cv2.imshow("Activity Window", combined)
+        if cv2.waitKey(1) & 0xFF == 27: break
+
+    cap.release()
+    cv2.destroyAllWindows()
+
+if __name__ == "__main__":
+    run_selection_menu()
+    log_selections(selected_indices)
+    run_pause_menu()
+    run_cv_activity()
+
+
+
+## POUBELLE
+
+def run_cv_activity_old():
+    cap = cv2.VideoCapture(1)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+    ARUCO_DICT = aruco.getPredefinedDictionary(aruco.DICT_4X4_50)
+    PARAMS = aruco.DetectorParameters()
+    mpHands = mp.solutions.hands
+    hands = mpHands.Hands(max_num_hands=MAX_HANDS, min_detection_confidence=0.7)
+    
+    # Configuration for all potential map markers
+    MAP_CONFIG = {
+        11: {'image': cv2.imread("craved_map/craved_map1.jpeg"), 'masks': {k: cv2.imread(f"craved_map/masks/{k}_mask.png", 0) for k in ['blue', 'green', 'red', 'beige']}}, 
+        9: {'image': cv2.imread("craved_map2/Frame 7_id9.png"), 'masks': {k: cv2.imread(f"craved_map2/masks/{k}_mask.png", 0) for k in ['blue', 'green', 'red', 'beige']}},
+        3: {'image': cv2.imread("craved_map3/Frame 8_id8.png"), 'masks': {k: cv2.imread(f"craved_map3/masks/{k}_mask.png", 0) for k in ['blue', 'green', 'red', 'beige']}},
+        4: {'image': cv2.imread("map_6x4/map_6x4.jpeg"), 'masks': {k: cv2.imread(f"map_6x4/masks/{k}_mask.png", 0) for k in ['blue', 'green', 'red', 'beige']}},
+        20: {'image': cv2.imread("map_coop_id20/map_game_id20.jpeg"), 'masks': {k: cv2.imread(f"map_coop_id20/masks/{k}_mask.png", 0) for k in ['blue', 'green', 'red', 'beige']}}
+    }
+
+    # Internal state
+    map_image = None
+    masks = None
+    map_h = map_w = 0
+    h_matrix_history = []
+    averaged_h_matrix = None
+    last_marker_id = None
+    hand_states = {0: {'last_color': None, 'channel': HAND_CHANNELS[0]}}
+    last_animal_position = {}
+
+    while True:
+        ret, frame = cap.read()
+        if not ret: break
+        
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        corners, ids, _ = aruco.detectMarkers(gray, ARUCO_DICT, parameters=PARAMS)
+
+        if ids is not None:
+            for i, m_id in enumerate(ids.flatten()):
+                if m_id in MAP_CONFIG:
+                    if last_marker_id != m_id:
+                        map_image = MAP_CONFIG[m_id]['image']
+                        masks = MAP_CONFIG[m_id]['masks']
+                        map_h, map_w, _ = map_image.shape
+                        last_marker_id = m_id
+                        h_matrix_history = []
+
+                    # Calculate mapping based on marker ID
+                    if m_id in [3, 9, 11]:
+                        size = 490 if m_id != 11 else 277
+                        m_pts = np.array([[map_w-size, 0], [map_w, 0], [map_w, size], [map_w-size, size]], dtype=np.float32)
+                    elif m_id in [4, 20]:
+                        m_pts = np.array([[map_w-344, 30], [map_w-42, 30], [map_w-42, 338], [map_w-344, 338]], dtype=np.float32)
+
+                    h_curr, _ = cv2.findHomography(corners[i][0], m_pts)
+                    if h_curr is not None:
+                        h_matrix_history.append(h_curr)
+                        if len(h_matrix_history) > 5: h_matrix_history.pop(0)
+                        averaged_h_matrix = np.mean(h_matrix_history, axis=0)
+                    break
+
+        if map_image is not None:
+            map_display = map_image.copy()
+        else:
+            map_display = np.zeros((480, 854, 3), dtype=np.uint8)
+
+        # Hand logic
+        results = hands.process(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+        hands_present = bool(results.multi_hand_landmarks)
+        
+        if hands_present and averaged_h_matrix is not None:
+            lm = results.multi_hand_landmarks[0].landmark[mpHands.HandLandmark.INDEX_FINGER_TIP]
+            pt = np.array([[[int(lm.x * frame.shape[1]), int(lm.y * frame.shape[0])]]], dtype=np.float32)
+            pt_t = cv2.perspectiveTransform(pt, averaged_h_matrix)[0][0]
+            mx, my = int(pt_t[0]), int(pt_t[1])
+
+            detected = None
+            if masks:
+                for key, mask in masks.items():
+                    if 0 <= my < map_h and 0 <= mx < map_w and mask[my, mx] > 0:
+                        detected = key; break
+
+            if detected != hand_states[0]['last_color']:
+                hand_states[0]['channel'].stop()
+                if detected in FINAL_SOUNDS: hand_states[0]['channel'].play(FINAL_SOUNDS[detected], loops=-1)
+                hand_states[0]['last_color'] = detected
+            cv2.circle(map_display, (mx, my), 30, (255, 0, 255), -1)
+        else:
+            hand_states[0]['channel'].stop()
+            hand_states[0]['last_color'] = None
+
+        # Animal Logic
+        if ids is not None and averaged_h_matrix is not None and not hands_present:
+            for i, m_id in enumerate(ids.flatten()):
+                if m_id in ANIMAL_HABITATS:
+                    c = corners[i][0]
+                    animal_pt = np.array([[[int(c[:,0].mean()), int(c[:,1].mean())]]], dtype=np.float32)
+                    m_pt = cv2.perspectiveTransform(animal_pt, averaged_h_matrix)[0][0]
+                    ax, ay = int(m_pt[0]), int(m_pt[1])
+                    
+                    region = None
+                    if masks:
+                        for k, v in masks.items():
+                            if 0 <= ay < map_h and 0 <= ax < map_w and v[ay, ax] > 0:
+                                region = k; break
+                    
+                    if region and last_animal_position.get(m_id) != region:
+                        status = "correct" if region in ANIMAL_HABITATS[m_id] else "wrong"
+                        ANIMAL_CHANNEL.stop()
+                        ANIMAL_CHANNEL.play(FINAL_SOUNDS[status])
+                        last_animal_position[m_id] = region
+
+        # Visualization
+        # combined = np.hstack((cv2.resize(frame, (854, 480)), cv2.resize(map_display, (854, 480))))
+
+        # --- DYNAMIC WINDOW SCALING ---
+        if map_image is not None:
+            # Scale the camera frame to match the height of the map image
+            f_h, f_w, _ = frame.shape
+            scale_ratio = map_h / f_h
+            new_f_w = int(f_w * scale_ratio)
+            resized_frame = cv2.resize(frame, (new_f_w, map_h))
+            
+            # Create the map display
+            map_display = map_image.copy()
+            
+            # Draw Hand/Animal logic on map_display...
+            # (Insert your hand/animal circle drawing code here)
+
+            # Stack them horizontally: [Resized Camera | Original Map]
+            combined = np.hstack((resized_frame, map_display))
+        else:
+            # Fallback if no map is detected yet
+            combined = cv2.resize(frame, (1280, 720))
+
+        cv2.imshow("Activity Window", combined)
+        if cv2.waitKey(1) & 0xFF == 27: break
+
+    cap.release()
+    cv2.destroyAllWindows()
+
+def run_cv_activity_old2():
+    cap = cv2.VideoCapture(1)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+    
+    # Init ArUco and Mediapipe
+    ARUCO_DICT = aruco.getPredefinedDictionary(aruco.DICT_4X4_50)
+    PARAMS = aruco.DetectorParameters()
+    mpHands = mp.solutions.hands
+    hands = mpHands.Hands(max_num_hands=MAX_HANDS, min_detection_confidence=0.7)
+    mpDraw = mp.solutions.drawing_utils # For drawing finger skeleton 
+
+    MAP_CONFIG = {
+        11: {'image': cv2.imread("craved_map/craved_map1.jpeg"), 'masks': {k: cv2.imread(f"craved_map/masks/{k}_mask.png", 0) for k in ['blue', 'green', 'red', 'beige']}}, 
+        9: {'image': cv2.imread("craved_map2/Frame 7_id9.png"), 'masks': {k: cv2.imread(f"craved_map2/masks/{k}_mask.png", 0) for k in ['blue', 'green', 'red', 'beige']}},
+        3: {'image': cv2.imread("craved_map3/Frame 8_id8.png"), 'masks': {k: cv2.imread(f"craved_map3/masks/{k}_mask.png", 0) for k in ['blue', 'green', 'red', 'beige']}},
+        4: {'image': cv2.imread("map_6x4/map_6x4.jpeg"), 'masks': {k: cv2.imread(f"map_6x4/masks/{k}_mask.png", 0) for k in ['blue', 'green', 'red', 'beige']}},
+        20: {'image': cv2.imread("map_coop_id20/map_game_id20.jpeg"), 'masks': {k: cv2.imread(f"map_coop_id20/masks/{k}_mask.png", 0) for k in ['blue', 'green', 'red', 'beige']}}
+    }
+
+    # States
+    map_image = None
+    masks = None
+    map_h = map_w = 0
+    h_matrix_history = []
+    averaged_h_matrix = None
+    last_marker_id = None
+    hand_states = {0: {'last_color': None, 'channel': HAND_CHANNELS[0], 'pos_history': []}} # Added pos_history 
+    last_animal_position = {}
+
+    while True:
+        ret, frame = cap.read()
+        if not ret: break
+        
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        corners, ids, _ = aruco.detectMarkers(gray, ARUCO_DICT, parameters=PARAMS)
+
+        if ids is not None:
+            for i, m_id in enumerate(ids.flatten()):
+                if m_id in MAP_CONFIG:
+                    if last_marker_id != m_id:
+                        map_image = MAP_CONFIG[m_id]['image']
+                        masks = MAP_CONFIG[m_id]['masks']
+                        map_h, map_w, _ = map_image.shape
+                        last_marker_id = m_id
+                        h_matrix_history = []
+
+                    # Marker setup based on ID
+                    if m_id in [3, 9, 11]:
+                        size = 490 if m_id != 11 else 277
+                        m_pts = np.array([[map_w-size, 0], [map_w, 0], [map_w, size], [map_w-size, size]], dtype=np.float32)
+                    elif m_id in [4, 20]:
+                        m_pts = np.array([[map_w-344, 30], [map_w-42, 30], [map_w-42, 338], [map_w-344, 338]], dtype=np.float32)
+
+                    h_curr, _ = cv2.findHomography(corners[i][0], m_pts)
+                    if h_curr is not None:
+                        h_matrix_history.append(h_curr)
+                        if len(h_matrix_history) > 5: h_matrix_history.pop(0)
+                        averaged_h_matrix = np.mean(h_matrix_history, axis=0)
+                    
+                    # VISIBILITY: Draw the detected ArUco marker box on the camera frame 
+                    cv2.polylines(frame, [corners[i][0].astype(int)], True, (0, 255, 0), 2)
+                    break
+
+        # VISIBILITY: Draw the Map Border in the camera frame using Inverse Homography 
+        if averaged_h_matrix is not None and map_image is not None:
+            try:
+                map_outline = np.float32([[0, 0], [map_w, 0], [map_w, map_h], [0, map_h]]).reshape(-1, 1, 2)
+                h_inv = cv2.invert(averaged_h_matrix)[1]
+                cam_outline = cv2.perspectiveTransform(map_outline, h_inv)
+                cv2.polylines(frame, [np.int32(cam_outline)], True, (255, 0, 0), 3)
+            except: pass
+
+        if map_image is not None:
+            map_display = map_image.copy()
+        else:
+            map_display = np.zeros((480, 854, 3), dtype=np.uint8)
+
+        # Hand Logic & Finger Visibility
+        results = hands.process(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+        hands_present = bool(results.multi_hand_landmarks)
+        
+        if hands_present and averaged_h_matrix is not None:
+            hand_lms = results.multi_hand_landmarks[0]
+            # VISIBILITY: Draw skeletal lines on the camera frame 
+            mpDraw.draw_landmarks(frame, hand_lms, mpHands.HAND_CONNECTIONS)
+            
+            # Get Index Tip
+            tip = hand_lms.landmark[mpHands.HandLandmark.INDEX_FINGER_TIP]
+            cx, cy = int(tip.x * frame.shape[1]), int(tip.y * frame.shape[0])
+            
+            # VISIBILITY: Draw red circle on the finger in camera view 
+            cv2.circle(frame, (cx, cy), 10, (0, 0, 255), -1)
+
+            # Transform to Map Coordinates
+            pt = np.array([[[cx, cy]]], dtype=np.float32)
+            pt_t = cv2.perspectiveTransform(pt, averaged_h_matrix)[0][0]
+            mx, my = int(pt_t[0]), int(pt_t[1])
+
+            # Finger Smoothing 
+            hand_states[0]['pos_history'].append((mx, my))
+            if len(hand_states[0]['pos_history']) > 5: hand_states[0]['pos_history'].pop(0)
+            avg_mx, avg_my = np.mean(hand_states[0]['pos_history'], axis=0).astype(int)
+
+            detected = None
+            if masks:
+                if 0 <= avg_my < map_h and 0 <= avg_mx < map_w:
+                    # VISIBILITY: Draw magenta circle on the digital map 
+                    cv2.circle(map_display, (avg_mx, avg_my), 40, (255, 0, 255), -1)
+                    for key, mask in masks.items():
+                        if mask[avg_my, avg_mx] > 0:
+                            detected = key; break
+
+            if detected != hand_states[0]['last_color']:
+                hand_states[0]['channel'].stop()
+                if detected in FINAL_SOUNDS: hand_states[0]['channel'].play(FINAL_SOUNDS[detected], loops=-1)
+                hand_states[0]['last_color'] = detected
+        else:
+            hand_states[0]['channel'].stop()
+            hand_states[0]['last_color'] = None
+            hand_states[0]['pos_history'] = []
+
+        # Animal Logic
+        if ids is not None and averaged_h_matrix is not None and not hands_present:
+            for i, m_id in enumerate(ids.flatten()):
+                if m_id in ANIMAL_HABITATS:
+                    c = corners[i][0]
+                    animal_pt = np.array([[[int(c[:,0].mean()), int(c[:,1].mean())]]], dtype=np.float32)
+                    m_pt = cv2.perspectiveTransform(animal_pt, averaged_h_matrix)[0][0]
+                    ax, ay = int(m_pt[0]), int(m_pt[1])
+                    
+                    # VISIBILITY: Draw green circle for animals on the map 
+                    cv2.circle(map_display, (ax, ay), 40, (0, 255, 0), 3)
+                    
+                    region = None
+                    if masks:
+                        for k, v in masks.items():
+                            if 0 <= ay < map_h and 0 <= ax < map_w and v[ay, ax] > 0:
+                                region = k; break
+                    
+                    if region and last_animal_position.get(m_id) != region:
+                        status = "correct" if region in ANIMAL_HABITATS[m_id] else "wrong"
+                        ANIMAL_CHANNEL.stop()
+                        ANIMAL_CHANNEL.play(FINAL_SOUNDS[status])
+                        last_animal_position[m_id] = region
+
+        # --- DYNAMIC WINDOW SCALING ---
+        if map_image is not None:
+            f_h, f_w, _ = frame.shape
+            scale_ratio = 720 / f_h
+            resized_frame = cv2.resize(frame, (int(f_w * scale_ratio), 720))
+            resized_map = cv2.resize(map_display, (int(map_w * (720 / map_h)), 720))
+            combined = np.hstack((resized_frame, resized_map))
+        else:
+            combined = cv2.resize(frame, (1280, 720))
+
+        cv2.imshow("Activity Window", combined)
+        if cv2.waitKey(1) & 0xFF == 27: break
+
+    cap.release()
+    cv2.destroyAllWindows()

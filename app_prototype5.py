@@ -20,10 +20,10 @@ CHANNEL = pygame.mixer.Channel(0)
 HABITATS = ["blue", "green", "red", "beige"]
 
 SOUNDS = {
-    "blue": pygame.mixer.Sound("sounds/ocean_blue.wav"),
-    "green": pygame.mixer.Sound("sounds/ocean_darkgreen.wav"),
-    "red": pygame.mixer.Sound("sounds/sand_red.wav"),
-    "beige": pygame.mixer.Sound("sounds/sand_beige.wav"),
+    "blue": pygame.mixer.Sound("sounds/Habitat Substrate Audio v4 20250917/HabitatSynthSounds v4 C Short Loop - Sparse Live Bottom.wav"),
+    "green": pygame.mixer.Sound("sounds/Habitat Substrate Audio v4 20250917/HabitatSynthSounds v4 C Short Loop - Dense Live Bottom.wav"),
+    "red": pygame.mixer.Sound("sounds/Habitat Substrate Audio v4 20250917/HabitatSynthSounds v4 C Short Loop - Rippled Sand.wav"),
+    "beige": pygame.mixer.Sound("sounds/Habitat Substrate Audio v4 20250917/HabitatSynthSounds v4 C Short Loop - Flat Sand.wav"),
 
     "blue_caption": pygame.mixer.Sound("sounds/Habitat Descriptions - Sparse Live Bottom.wav"),
     "green_caption": pygame.mixer.Sound("sounds/Habitat Descriptions - Dense Live Bottom.wav"),
@@ -122,6 +122,7 @@ cap = cv2.VideoCapture(1)
 ARUCO_DICT = aruco.getPredefinedDictionary(aruco.DICT_4X4_50)
 PARAMS = aruco.DetectorParameters()
 PARAMS.cornerRefinementMethod = aruco.CORNER_REFINE_SUBPIX
+# PARAMS.cornerRefinementMethod = aruco.CORNER_REFINE_APRILTAG
 
 mpHands = mp.solutions.hands
 hands = mpHands.Hands(max_num_hands=1, min_detection_confidence=0.7, min_tracking_confidence=0.7)
@@ -132,6 +133,8 @@ h_matrix_history = []
 MAX_H_HISTORY = 5
 averaged_h_matrix = None
 last_marker_id = None
+HOMOGRAPHY_PERSISTENCE_FRAMES = 10 
+frames_since_last_detection = 0
 
 # Finger smoothing
 finger_pos_history = []
@@ -162,7 +165,7 @@ while True:
 
     HOMOGRAPHY_MARKER_IDS = [2, 9, 11]
 
-    MIN_MARKER_SIZE_PX = 20
+    MIN_MARKER_SIZE_PX = 30
     
     filtered_corners = []
     filtered_ids = []
@@ -192,8 +195,31 @@ while True:
     corners = tuple(filtered_corners)
     
     # Ensure ids is None if no markers passed the filter
-    if ids is not None and len(ids) == 0:
-        ids = None
+    # if ids is not None and len(ids) == 0:
+    #     ids = None
+
+    if ids is not None:
+        # Loop over all detected and filtered markers
+        for i, marker_id in enumerate(ids.flatten()):
+            # Get the corners and convert to integer array for drawing
+            marker_corners = corners[i].astype(int)[0] 
+            
+            # Draw the boundary box (polygon) around the marker
+            cv2.polylines(frame, [marker_corners], isClosed=True, color=(0, 255, 0), thickness=2)
+            
+            # Get the position for the label (top-left corner)
+            corner_tl = marker_corners[0]
+            
+            # Put the text label (Marker ID)
+            cv2.putText(
+                frame, 
+                str(marker_id), 
+                (corner_tl[0], corner_tl[1] - 15), # Slightly above the top-left corner
+                cv2.FONT_HERSHEY_SIMPLEX, 
+                0.7, 
+                (0, 255, 0), # Green text
+                2
+            )
         
     current_h_matrix = None
 
@@ -242,14 +268,53 @@ while True:
                     print(f"Homography updated for marker {marker_id}")
 
         if current_h_matrix is not None:
+            frames_since_last_detection = 0
             h_matrix_history.append(current_h_matrix)
             if len(h_matrix_history) > MAX_H_HISTORY:
                 h_matrix_history.pop(0)
             averaged_h_matrix = np.mean(h_matrix_history, axis=0)
     else:
-        averaged_h_matrix = None
-        last_marker_id = None
-        h_matrix_history = []
+        # if frames_since_last_detection < HOMOGRAPHY_PERSISTENCE_FRAMES:
+        #     # Keep the last averaged_h_matrix for a few more frames
+        #     frames_since_last_detection += 1
+        # else:
+            # Only reset after persistence frames are used up
+            averaged_h_matrix = None
+            last_marker_id = None
+            h_matrix_history = []
+        # averaged_h_matrix = None
+        # last_marker_id = None
+        # h_matrix_history = []
+
+    
+    # --------------------------------
+    # NEW CODE BLOCK: DRAW MAP BORDER
+    # --------------------------------
+    if averaged_h_matrix is not None:
+        # 1. Define the four corners of the map (in map coordinates)
+        # Assuming the map goes from (0, 0) to (MAP_W, MAP_H)
+        map_corners = np.float32([[0, 0], [MAP_W, 0], [MAP_W, MAP_H], [0, MAP_H]]).reshape(-1, 1, 2)
+        
+        # 2. Invert the homography matrix (H_inverse)
+        # H maps Camera -> Map. We need H_inverse to map Map -> Camera.
+        # This is a robust way to get the inverse transform.
+        H_inverse = cv2.invert(averaged_h_matrix)[1] 
+        
+        # 3. Project the map corners back onto the camera frame
+        camera_corners = cv2.perspectiveTransform(map_corners, H_inverse)
+        
+        # 4. Draw the border on the camera frame
+        # We draw a polygon connecting the projected corners (in blue)
+        # Note: corners must be integer type for cv2.polylines
+        cv2.polylines(
+            frame, 
+            [np.int32(camera_corners)], 
+            isClosed=True, 
+            color=(255, 0, 0), # Blue color
+            thickness=3
+        )
+
+    # --------------------------------
 
     # ---- Finger detection
     results = hands.process(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
@@ -275,7 +340,7 @@ while True:
             # Check mask
             detected_color = None
             if 0 <= averaged_mx < MAP_W and 0 <= averaged_my < MAP_H:
-                cv2.circle(map_display, (averaged_mx, averaged_my), 30, (0, 0, 255), -1)
+                cv2.circle(map_display, (averaged_mx, averaged_my), 50, (0, 0, 255), -1)
                 for color, mask in MASKS.items():
                     if mask is not None and mask.shape[0] > averaged_my and mask.shape[1] > averaged_mx:
                         if mask[averaged_my, averaged_mx] > 0:
@@ -319,7 +384,7 @@ while True:
                 pt = np.array([[[cx_animal, cy_animal]]], dtype=np.float32)
                 map_pt = cv2.perspectiveTransform(pt, averaged_h_matrix)[0][0]
                 mx_animal, my_animal = int(map_pt[0]), int(map_pt[1])
-                cv2.circle(map_display, (mx_animal, my_animal), 30, (0, 255, 0), -1)
+                cv2.circle(map_display, (mx_animal, my_animal), 50, (0, 255, 0), -1)
 
                 region = check_region(mx_animal, my_animal)
 

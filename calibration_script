@@ -1,0 +1,73 @@
+import numpy as np
+import cv2
+import glob
+
+# 1. SETUP PARAMETERS
+# (rows, columns) of internal corners (e.g., 9x6 board has 8x5 internal corners)
+CHECKERBOARD = (10, 7) 
+SQUARE_SIZE = 25  # Size of a single square in mm (optional for intrinsic)
+TERMINATION_CRITERIA = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
+
+# 2. PREPARE OBJECT POINTS
+# objp is the 3D points in real world space (0,0,0), (1,0,0), (2,0,0) ...
+objp = np.zeros((CHECKERBOARD[0] * CHECKERBOARD[1], 3), np.float32)
+# Assigns X, Y coordinates to the grid points
+objp[:, :2] = np.mgrid[0:CHECKERBOARD[0], 0:CHECKERBOARD[1]].T.reshape(-1, 2) * SQUARE_SIZE
+
+# Arrays to store object points and image points from all images
+objpoints = []  # 3D points in real world space
+imgpoints = []  # 2D points in image plane
+
+# 3. FIND CORNERS IN CAPTURED IMAGES
+images = glob.glob('calibration_Sol_iphone/*.jpeg') # IMPORTANT: Adjust path
+
+frame = None
+for filename in images:
+    print(f"Processing {filename}...")
+    img = cv2.imread(filename)
+    if img is None:
+        continue
+        
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    frame = img # Keep the last frame size
+
+    # Find the chessboard corners
+    ret, corners = cv2.findChessboardCorners(gray, CHECKERBOARD, cv2.CALIB_CB_ADAPTIVE_THRESH + cv2.CALIB_CB_FAST_CHECK + cv2.CALIB_CB_NORMALIZE_IMAGE)
+
+    # If found, add object points, and refine image points
+    if ret == True:
+        objpoints.append(objp)
+        # Refine corner locations for greater precision
+        corners2 = cv2.cornerSubPix(gray, corners, (11, 11), (-1, -1), TERMINATION_CRITERIA)
+        imgpoints.append(corners2)
+        
+        # Optionally draw corners for verification
+        cv2.drawChessboardCorners(img, CHECKERBOARD, corners2, ret)
+        cv2.imshow('img', img)
+        cv2.waitKey(500)
+        
+cv2.destroyAllWindows()
+
+# 4. CALIBRATION
+if frame is not None and len(objpoints) > 0:
+    # Perform the calibration!
+    ret, cameraMatrix, distCoeffs, rvecs, tvecs = cv2.calibrateCamera(
+        objpoints, 
+        imgpoints, 
+        gray.shape[::-1], 
+        None, 
+        None
+    )
+
+    print("\n--- Calibration Results ---")
+    print(f"Reprojection Error: {ret:.4f}") # Lower is better (ideally < 1.0)
+    print("\nCamera Matrix (K):\n", cameraMatrix)
+    print("\nDistortion Coefficients (D):\n", distCoeffs)
+
+    # 5. SAVE RESULTS
+    # Save these two matrices for use in your main program
+    np.savez('camera_calibration_results.npz', 
+             cameraMatrix=cameraMatrix, 
+             distCoeffs=distCoeffs)
+else:
+    print("Could not find enough corners for calibration. Check image path or quality.")
