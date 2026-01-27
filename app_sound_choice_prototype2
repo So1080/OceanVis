@@ -101,14 +101,13 @@ HABITATS_ORDER = ["Sparse live bottom", "Dense live bottom", "Flat sand", "Rippl
 selected_indices = {h: 0 for h in HABITATS_ORDER}
 FINAL_SOUNDS = {}
 
-# Animal logic updated to match the new habitat colors
+# Animal → allowed habitat
 ANIMAL_HABITATS = {
-    9: ["blue"],               # coral  
-    4: ["blue", "red"],        # crab
-    5: ["green"],              # turtle
-    6: ["red", "beige"],       # ray
-    7: ["blue"],               # anemone
-    8: ["red", "beige"]        # shell
+    3: ["blue"], #anemone
+    5: ["green"], #turtle
+    6: ["red", "beige"], #ray
+    7: ["green","blue"], #shark
+    8: ["red","beige"], #shell
 }
 
 UI_COLORS = {
@@ -117,6 +116,8 @@ UI_COLORS = {
     "Flat sand": (254, 89, 84),             # Red
     "Rippled sand": (252, 229, 185)       # Beige
 }
+
+
 
 # -----------------------------
 # PHASE 1: SELECTION MENU
@@ -285,6 +286,10 @@ def run_cv_activity():
     print("[C] Calibration Mode | [1-4] Select Corner | [WASD/Arrows] Move")
     print("[ESC] Exit\n")
 
+    last_animal_status = {}
+    last_animal_position = {}
+    last_animal_coords = {}
+
     while True:
         ret, frame = cap.read()
         if not ret:
@@ -398,6 +403,62 @@ def run_cv_activity():
             hand_states[0]['channel'].stop()
             hand_states[0]['last_color'] = None
 
+        # Animal detection
+        MOVEMENT_THRESHOLD = 25 # Minimum pixels moved to re-trigger sound
+
+        if ids is not None and averaged_h_matrix is not None and masks is not None: 
+            for i, marker_id in enumerate(ids.flatten()):
+                if marker_id in ANIMAL_HABITATS:
+                    # 1. Map Coordinate Calculation
+                    c = corners[i][0]
+                    cx_animal, cy_animal = int(c[:,0].mean()), int(c[:,1].mean())
+                    pt = np.array([[[cx_animal, cy_animal]]], dtype=np.float32)
+                    map_pt = cv2.perspectiveTransform(pt, averaged_h_matrix)[0][0]
+                    mx_animal, my_animal = int(map_pt[0]), int(map_pt[1])
+                    
+                    # 2. Check Habitat Region
+                    current_region = None
+                    if 0 <= my_animal < map_h and 0 <= mx_animal < map_w:
+                        for mask_key, mask_img in masks.items():
+                            if mask_img[my_animal, mx_animal] > 0:
+                                current_region = mask_key
+                                break
+
+                    # 3. Sound & Movement Logic
+                    if current_region:
+                        is_correct = current_region in ANIMAL_HABITATS[marker_id]
+                        status = "correct" if is_correct else "wrong"
+                        
+                        # Calculate distance from last recorded position
+                        prev_coords = last_animal_coords.get(marker_id)
+                        has_moved_significantly = False
+                        
+                        if prev_coords:
+                            # Euclidean Distance: sqrt((x2-x1)^2 + (y2-y1)^2)
+                            dist = np.linalg.norm(np.array([mx_animal, my_animal]) - np.array(prev_coords))
+                            if dist > MOVEMENT_THRESHOLD:
+                                has_moved_significantly = True
+
+                        # Play sound if:
+                        # A) Moved significantly OR B) Entered a brand new habitat
+                        if has_moved_significantly or last_animal_position.get(marker_id) != current_region:
+                            # Only play if the channel isn't already busy to avoid "stuttering"
+                            if not ANIMAL_CHANNEL.get_busy(): 
+                                ANIMAL_CHANNEL.play(FINAL_SOUNDS[status])
+                            
+                            # Update persistent state
+                            last_animal_position[marker_id] = current_region
+                            last_animal_coords[marker_id] = (mx_animal, my_animal)
+                    else:
+                        # If animal leaves all habitat zones, clear its history
+                        last_animal_position.pop(marker_id, None)
+                        last_animal_coords.pop(marker_id, None)
+
+                    # 4. Visual Feedback for testing
+                    color = (0, 255, 0) if current_region in ANIMAL_HABITATS[marker_id] else (0, 0, 255)
+                    cv2.circle(map_display, (mx_animal, my_animal), 50, color, 2)
+
+
         if map_image is not None:
             f_h, f_w, _ = frame.shape
             scale = 720 / f_h
@@ -428,204 +489,4 @@ if __name__ == "__main__":
 # Arrow Keys: Move the selected corner by 1 pixel.
 
 # Shift + Arrows: Move the selected corner by 10 pixels.
-
-## POUBELLE
-
-def old_run_cv_activity():
-    cap = cv2.VideoCapture(1)
-    
-    time.sleep(1.0)
-
-    if not cap.isOpened():
-        print("Error: Could not open camera. Trying index 0...")
-        cap = cv2.VideoCapture(0)
-        if not cap.isOpened(): return
-        
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
-    
-    # --- SMOOTHING ADJUSTMENT ---
-    # Increase this (e.g., 10-15) for very smooth/slow movement.
-    # Decrease this (e.g., 2-3) for instant/jittery movement.
-    SMOOTHING_FACTOR = 8 
-    ALPHA = 0.3  # Stability factor for the map (0.05 = very still, 0.5 = fast moving)
-
-    ARUCO_DICT = aruco.getPredefinedDictionary(aruco.DICT_4X4_50)
-    PARAMS = aruco.DetectorParameters()
-    mpHands = mp.solutions.hands
-    hands = mpHands.Hands(max_num_hands=MAX_HANDS, min_detection_confidence=0.7)
-    mpDraw = mp.solutions.drawing_utils 
-
-    MAP_CONFIG = {
-        11: {'image': cv2.imread("craved_map/craved_map1.jpeg"), 'masks': {k: cv2.imread(f"craved_map/masks/{k}_mask.png", 0) for k in ['blue', 'green', 'red', 'beige']}}, 
-        9: {'image': cv2.imread("craved_map2/Frame 7_id9.png"), 'masks': {k: cv2.imread(f"craved_map2/masks/{k}_mask.png", 0) for k in ['blue', 'green', 'red', 'beige']}},
-        3: {'image': cv2.imread("craved_map3/Frame 8_id8.png"), 'masks': {k: cv2.imread(f"craved_map3/masks/{k}_mask.png", 0) for k in ['blue', 'green', 'red', 'beige']}},
-        4: {'image': cv2.imread("map_6x4/map_6x4.jpeg"), 'masks': {k: cv2.imread(f"map_6x4/masks/{k}_mask.png", 0) for k in ['blue', 'green', 'red', 'beige']}},
-        20: {'image': cv2.imread("map_coop_id20/map_coop_id20.png"), 'masks': {k: cv2.imread(f"map_coop_id20/masks/{k}_mask.png", 0) for k in ['blue', 'green', 'red', 'beige']}}
-    }
-
-    # Starting coordinates for ID 20/22 (you can adjust these)
-    # Order: Top-Left, Top-Right, Bottom-Right, Bottom-Left
-    calib_pts = np.array([
-        [745, 580], [1098, 580], [1098, 934], [745, 934]
-    ], dtype=np.float32)
-
-    selected_corner = 0
-    calibration_mode = False
-
-    map_image = None
-    masks = None
-    map_h = map_w = 0
-    h_matrix_history = []
-    averaged_h_matrix = None
-    last_marker_id = None
-    # Track position history for smoothing
-    hand_states = {0: {'last_color': None, 'channel': HAND_CHANNELS[0], 'pos_history': []}}
-    last_animal_position = {}
-    # print("Starting CV Activity... Press ESC to exit.")
-
-    lock_homography = False
-    print("Starting CV Activity... Press 'L' to Lock Map, ESC to exit.")
-    print("Controls: [C] Calibrate, [1-4] Select Corner, [Arrows] Move, [L] Lock")
-
-    while True:
-        ret, frame = cap.read()
-        # if not ret:
-        #     print("Failed to grab frame.")
-        #     break
-
-        if not ret:
-            cv2.waitKey(10)
-            continue
-        
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        corners, ids, _ = aruco.detectMarkers(gray, ARUCO_DICT, parameters=PARAMS)
-
-        # SUB-PIXEL REFINEMENT: Makes the rectangle edges very stable
-        if ids is not None:
-            for corner in corners:
-                cv2.cornerSubPix(gray, corner, winSize=(5, 5), zeroZone=(-1, -1), 
-                                 criteria=(cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.1))
-
-        if ids is not None and not lock_homography:
-            for i, m_id in enumerate(ids.flatten()):
-                if m_id in MAP_CONFIG:
-                    if last_marker_id != m_id:
-                        map_image = MAP_CONFIG[m_id]['image']
-                        masks = MAP_CONFIG[m_id]['masks']
-                        map_h, map_w, _ = map_image.shape
-                        last_marker_id = m_id
-                        h_matrix_history = []
-
-                    # Marker coordinate setup
-                    #id 0 : top left
-                    #id 1 : top right
-                    #id 2 : bottom right
-                    #id 3 : bottom left
-                    if m_id in [3, 9, 11]:
-                        size = 490 if m_id != 11 else 277
-                        m_pts = np.array([[map_w-size, 0], [map_w, 0], [map_w, size], [map_w-size, size]], dtype=np.float32)
-                    elif m_id in [4, 21]:
-                        m_pts = np.array([[map_w-344, 30], [map_w-42, 30], [map_w-42, 338], [map_w-344, 338]], dtype=np.float32)
-                    elif m_id in [20,22]:
-                        m_pts = np.array([[map_w-535, 580], [map_w-182, 580], [map_w-182, 934], [map_w-535, 934]], dtype=np.float32)
-
-
-                    h_curr, _ = cv2.findHomography(corners[i][0], m_pts)
-
-                    if h_curr is not None:
-                        if averaged_h_matrix is None:
-                            averaged_h_matrix = h_curr
-                        else:
-                            # EXPONENTIAL SMOOTHING: Map stays a solid rectangle
-                            averaged_h_matrix = cv2.addWeighted(averaged_h_matrix, (1.0 - ALPHA), h_curr, ALPHA, 0)
-
-                    # if h_curr is not None:
-                    #     h_matrix_history.append(h_curr)
-                    #     if len(h_matrix_history) > 5: h_matrix_history.pop(0)
-                    #     averaged_h_matrix = np.mean(h_matrix_history, axis=0)
-                    
-                    # VISIBILITY: Draw ArUco marker box on camera frame
-                    cv2.polylines(frame, [corners[i][0].astype(int)], True, (0, 255, 0), 2)
-                    break
-
-        # VISIBILITY: Draw Map Boundary in Camera View
-        if averaged_h_matrix is not None and map_image is not None:
-            try:
-                map_outline = np.float32([[0, 0], [map_w, 0], [map_w, map_h], [0, map_h]]).reshape(-1, 1, 2)
-                h_inv = cv2.invert(averaged_h_matrix)[1]
-                cam_outline = cv2.perspectiveTransform(map_outline, h_inv)
-                cv2.polylines(frame, [np.int32(cam_outline)], True, (255, 0, 0), 3)
-            except: pass
-
-        map_display = map_image.copy() if map_image is not None else np.zeros((480, 854, 3), dtype=np.uint8)
-
-        # Finger Detection & Smoothed Visibility
-        results = hands.process(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-        if results.multi_hand_landmarks and averaged_h_matrix is not None:
-            hand_lms = results.multi_hand_landmarks[0]
-            # VISIBILITY: Draw hand skeleton on camera frame
-            mpDraw.draw_landmarks(frame, hand_lms, mpHands.HAND_CONNECTIONS)
-            
-            # Index tip detection
-            tip = hand_lms.landmark[mpHands.HandLandmark.INDEX_FINGER_TIP]
-            cx, cy = int(tip.x * frame.shape[1]), int(tip.y * frame.shape[0])
-            
-            # Transform to map space
-            pt = np.array([[[cx, cy]]], dtype=np.float32)
-            pt_t = cv2.perspectiveTransform(pt, averaged_h_matrix)[0][0]
-            mx, my = int(pt_t[0]), int(pt_t[1])
-
-            # APPLY SMOOTHING
-            hand_states[0]['pos_history'].append((mx, my))
-            if len(hand_states[0]['pos_history']) > SMOOTHING_FACTOR:
-                hand_states[0]['pos_history'].pop(0)
-            
-            # Calculate averaged position
-            avg_mx, avg_my = np.mean(hand_states[0]['pos_history'], axis=0).astype(int)
-
-            # VISIBILITY: Show tracking circles
-            cv2.circle(frame, (cx, cy), 10, (0, 0, 255), -1) # On camera
-            cv2.circle(map_display, (avg_mx, avg_my), 40, (255, 0, 255), -1) # On digital map
-
-            detected = None
-            if masks and 0 <= avg_my < map_h and 0 <= avg_mx < map_w:
-                for key, mask in masks.items():
-                    if mask[avg_my, avg_mx] > 0:
-                        detected = key; break
-
-            if detected != hand_states[0]['last_color']:
-                hand_states[0]['channel'].stop()
-                if detected in FINAL_SOUNDS: 
-                    hand_states[0]['channel'].play(FINAL_SOUNDS[detected], loops=-1)
-                hand_states[0]['last_color'] = detected
-        else:
-            hand_states[0]['channel'].stop()
-            hand_states[0]['last_color'] = None
-            hand_states[0]['pos_history'] = []
-
-        key = cv2.waitKey(1) & 0xFF
-        if key == 27: # ESC
-            break
-        elif key == ord('l'): # Press 'L' on keyboard while clicking the CV window
-            lock_homography = not lock_homography
-            print(f"Homography Locked: {lock_homography}")
-
-        # Display Logic
-        if map_image is not None:
-            f_h, f_w, _ = frame.shape
-            scale = 720 / f_h
-            resized_f = cv2.resize(frame, (int(f_w * scale), 720))
-            resized_m = cv2.resize(map_display, (int(map_w * (720 / map_h)), 720))
-            combined = np.hstack((resized_f, resized_m))
-            cv2.imshow("Activity Window", combined)
-        else:
-            # combined = cv2.resize(frame, (1280, 720))
-            cv2.imshow("Activity Window", cv2.resize(frame, (1280, 720)))
-
-        cv2.imshow("Activity Window", combined)
-        if cv2.waitKey(1) & 0xFF == 27: break
-
-    cap.release()
-    cv2.destroyAllWindows()
 
