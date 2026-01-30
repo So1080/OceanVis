@@ -203,6 +203,11 @@ def run_selection_menu():
     # Link chosen sounds to mask keys
     for mask_key, hab_name in MASK_TO_HABITAT.items():
         FINAL_SOUNDS[mask_key] = pygame.mixer.Sound(SOUND_OPTIONS[hab_name][selected_indices[hab_name]])
+
+    FINAL_SOUNDS["blue_caption"] = pygame.mixer.Sound("sounds/Habitat_Legend-NarratorONLY-Sparse_Live_Bottom.wav")
+    FINAL_SOUNDS["green_caption"] = pygame.mixer.Sound("sounds/Habitat_Legend-NarratorONLY-Dense_Live_Bottom.wav")
+    FINAL_SOUNDS["red_caption"] = pygame.mixer.Sound("sounds/Habitat_Legend-NarratorONLY-Rippled_Sand.wav")
+    FINAL_SOUNDS["beige_caption"] = pygame.mixer.Sound("sounds/Habitat_Legend-NarratorONLY-Flat_Sand.wav")
     
     FINAL_SOUNDS["correct"] = pygame.mixer.Sound("sounds/right_2.mp3")
     FINAL_SOUNDS["wrong"] = pygame.mixer.Sound("sounds/wrong.mp3")
@@ -262,9 +267,48 @@ def run_cv_activity():
     mpDraw = mp.solutions.drawing_utils 
 
     MAP_CONFIG = {
-        11: {'image': cv2.imread("craved_map/craved_map1.jpeg"), 'masks': {k: cv2.imread(f"craved_map/masks/{k}_mask.png", 0) for k in ['blue', 'green', 'red', 'beige']}}, 
-        9: {'image': cv2.imread("craved_map2/Frame 7_id9.png"), 'masks': {k: cv2.imread(f"craved_map2/masks/{k}_mask.png", 0) for k in ['blue', 'green', 'red', 'beige']}},
-        3: {'image': cv2.imread("craved_map3/Frame 8_id8.png"), 'masks': {k: cv2.imread(f"craved_map3/masks/{k}_mask.png", 0) for k in ['blue', 'green', 'red', 'beige']}},
+        # 11: {'image': cv2.imread("craved_map/craved_map1.jpeg"), 'masks': {k: cv2.imread(f"craved_map/masks/{k}_mask.png", 0) for k in ['blue', 'green', 'red', 'beige']}},
+        11: {
+            'image': cv2.imread("craved_map/craved_map1.jpeg"), 
+            'masks': {
+                'blue': cv2.imread("craved_map/masks/blue_mask.png", 0),
+                'green': cv2.imread("craved_map/masks/green_mask.png", 0),
+                'red': cv2.imread("craved_map/masks/red_mask.png", 0),
+                'beige': cv2.imread("craved_map/masks/beige_mask.png", 0),
+                'blue_caption': cv2.imread("craved_map/masks/blue_caption.png", 0),
+                'green_caption': cv2.imread("craved_map/masks/green_caption.png", 0),
+                'red_caption': cv2.imread("craved_map/masks/red_caption.png", 0),
+                'beige_caption': cv2.imread("craved_map/masks/beige_caption.png", 0),
+            }
+        },
+        # 9: {'image': cv2.imread("craved_map2/Frame 7_id9.png"), 'masks': {k: cv2.imread(f"craved_map2/masks/{k}_mask.png", 0) for k in ['blue', 'green', 'red', 'beige']}},
+        9: {
+            'image': cv2.imread("craved_map2/Frame 7_id9.png"), 
+            'masks': {
+                'blue': cv2.imread("craved_map2/masks/blue_mask.png", 0),
+                'green': cv2.imread("craved_map2/masks/green_mask.png", 0),
+                'red': cv2.imread("craved_map2/masks/red_mask.png", 0),
+                'beige': cv2.imread("craved_map2/masks/beige_mask.png", 0),
+                'blue_caption': cv2.imread("craved_map2/masks/blue_caption.png", 0),
+                'green_caption': cv2.imread("craved_map2/masks/green_caption.png", 0),
+                'red_caption': cv2.imread("craved_map2/masks/red_caption.png", 0),
+                'beige_caption': cv2.imread("craved_map2/masks/beige_caption.png", 0),
+            }
+        },
+        # 3: {'image': cv2.imread("craved_map3/Frame 8_id8.png"), 'masks': {k: cv2.imread(f"craved_map3/masks/{k}_mask.png", 0) for k in ['blue', 'green', 'red', 'beige']}},
+        3: {
+            'image': cv2.imread("craved_map3/Frame 8_id8.png"), 
+            'masks': {
+                'blue': cv2.imread("craved_map3/masks/blue_mask.png", 0),
+                'green': cv2.imread("craved_map3/masks/green_mask.png", 0),
+                'red': cv2.imread("craved_map3/masks/red_mask.png", 0),
+                'beige': cv2.imread("craved_map3/masks/beige_mask.png", 0),
+                'blue_caption': cv2.imread("craved_map3/masks/blue_caption.png", 0),
+                'green_caption': cv2.imread("craved_map3/masks/green_caption.png", 0),
+                'red_caption': cv2.imread("craved_map3/masks/red_caption.png", 0),
+                'beige_caption': cv2.imread("craved_map3/masks/beige_caption.png", 0),
+            }
+        },
         4: {'image': cv2.imread("map_6x4/map_6x4.jpeg"), 'masks': {k: cv2.imread(f"map_6x4/masks/{k}_mask.png", 0) for k in ['blue', 'green', 'red', 'beige']}},
         27: {'image': cv2.imread("map_coop_id20/map_coop_id20.png"), 'masks': {k: cv2.imread(f"map_coop_id20/masks/{k}_mask.png", 0) for k in ['blue', 'green', 'red', 'beige']}}
     }
@@ -397,7 +441,11 @@ def run_cv_activity():
 
             if detected != hand_states[0]['last_color']:
                 hand_states[0]['channel'].stop()
-                if detected in FINAL_SOUNDS: hand_states[0]['channel'].play(FINAL_SOUNDS[detected], loops=-1)
+                # if detected in FINAL_SOUNDS: hand_states[0]['channel'].play(FINAL_SOUNDS[detected], loops=-1)
+                if detected in FINAL_SOUNDS:
+                    # If it's a caption, play once. If it's a habitat, loop it.
+                    is_looping = -1 if "caption" not in detected else 0
+                    hand_states[0]['channel'].play(FINAL_SOUNDS[detected], loops=is_looping)
                 hand_states[0]['last_color'] = detected
         else:
             hand_states[0]['channel'].stop()

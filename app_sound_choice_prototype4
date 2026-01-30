@@ -203,6 +203,11 @@ def run_selection_menu():
     # Link chosen sounds to mask keys
     for mask_key, hab_name in MASK_TO_HABITAT.items():
         FINAL_SOUNDS[mask_key] = pygame.mixer.Sound(SOUND_OPTIONS[hab_name][selected_indices[hab_name]])
+
+    FINAL_SOUNDS["blue_caption"] = pygame.mixer.Sound("sounds/Habitat_Legend-NarratorONLY-Sparse_Live_Bottom.wav")
+    FINAL_SOUNDS["green_caption"] = pygame.mixer.Sound("sounds/Habitat_Legend-NarratorONLY-Dense_Live_Bottom.wav")
+    FINAL_SOUNDS["red_caption"] = pygame.mixer.Sound("sounds/Habitat_Legend-NarratorONLY-Flat_Sand.wav")
+    FINAL_SOUNDS["beige_caption"] = pygame.mixer.Sound("sounds/Habitat_Legend-NarratorONLY-Rippled_Sand.wav")
     
     FINAL_SOUNDS["correct"] = pygame.mixer.Sound("sounds/right_2.mp3")
     FINAL_SOUNDS["wrong"] = pygame.mixer.Sound("sounds/wrong.mp3")
@@ -262,9 +267,45 @@ def run_cv_activity():
     mpDraw = mp.solutions.drawing_utils 
 
     MAP_CONFIG = {
-        11: {'image': cv2.imread("craved_map/craved_map1.jpeg"), 'masks': {k: cv2.imread(f"craved_map/masks/{k}_mask.png", 0) for k in ['blue', 'green', 'red', 'beige']}}, 
-        9: {'image': cv2.imread("craved_map2/Frame 7_id9.png"), 'masks': {k: cv2.imread(f"craved_map2/masks/{k}_mask.png", 0) for k in ['blue', 'green', 'red', 'beige']}},
-        3: {'image': cv2.imread("craved_map3/Frame 8_id8.png"), 'masks': {k: cv2.imread(f"craved_map3/masks/{k}_mask.png", 0) for k in ['blue', 'green', 'red', 'beige']}},
+        11: {
+            'image': cv2.imread("craved_map/craved_map1.jpeg"), 
+            'masks': {
+                'blue': cv2.imread("craved_map/masks/blue_mask.png", 0),
+                'green': cv2.imread("craved_map/masks/green_mask.png", 0),
+                'red': cv2.imread("craved_map/masks/red_mask.png", 0),
+                'beige': cv2.imread("craved_map/masks/beige_mask.png", 0),
+                'blue_caption': cv2.imread("craved_map/masks/blue_caption.png", 0),
+                'green_caption': cv2.imread("craved_map/masks/green_caption.png", 0),
+                'red_caption': cv2.imread("craved_map/masks/red_caption.png", 0),
+                'beige_caption': cv2.imread("craved_map/masks/beige_caption.png", 0),
+            }
+        },
+        9: {
+            'image': cv2.imread("craved_map2/Frame 7_id9.png"), 
+            'masks': {
+                'blue': cv2.imread("craved_map2/masks/blue_mask.png", 0),
+                'green': cv2.imread("craved_map2/masks/green_mask.png", 0),
+                'red': cv2.imread("craved_map2/masks/red_mask.png", 0),
+                'beige': cv2.imread("craved_map2/masks/beige_mask.png", 0),
+                'blue_caption': cv2.imread("craved_map2/masks/blue_caption.png", 0),
+                'green_caption': cv2.imread("craved_map2/masks/green_caption.png", 0),
+                'red_caption': cv2.imread("craved_map2/masks/red_caption.png", 0),
+                'beige_caption': cv2.imread("craved_map2/masks/beige_caption.png", 0),
+            }
+        },
+        3: {
+            'image': cv2.imread("craved_map3/Frame 8_id8.png"), 
+            'masks': {
+                'blue': cv2.imread("craved_map3/masks/blue_mask.png", 0),
+                'green': cv2.imread("craved_map3/masks/green_mask.png", 0),
+                'red': cv2.imread("craved_map3/masks/red_mask.png", 0),
+                'beige': cv2.imread("craved_map3/masks/beige_mask.png", 0),
+                'blue_caption': cv2.imread("craved_map3/masks/blue_caption.png", 0),
+                'green_caption': cv2.imread("craved_map3/masks/green_caption.png", 0),
+                'red_caption': cv2.imread("craved_map3/masks/red_caption.png", 0),
+                'beige_caption': cv2.imread("craved_map3/masks/beige_caption.png", 0),
+            }
+        },
         4: {'image': cv2.imread("map_6x4/map_6x4.jpeg"), 'masks': {k: cv2.imread(f"map_6x4/masks/{k}_mask.png", 0) for k in ['blue', 'green', 'red', 'beige']}},
         27: {'image': cv2.imread("map_coop_id20/map_coop_id20.png"), 'masks': {k: cv2.imread(f"map_coop_id20/masks/{k}_mask.png", 0) for k in ['blue', 'green', 'red', 'beige']}}
     }
@@ -373,21 +414,49 @@ def run_cv_activity():
                 cv2.circle(map_display, (int(pt[0]), int(pt[1])), size, color, -1)
             cv2.putText(frame, "CALIBRATION ACTIVE", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
 
-        results = hands.process(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-        if results.multi_hand_landmarks and averaged_h_matrix is not None:
-            hand_lms = results.multi_hand_landmarks[0]
-            mpDraw.draw_landmarks(frame, hand_lms, mpHands.HAND_CONNECTIONS)
-            tip = hand_lms.landmark[mpHands.HandLandmark.INDEX_FINGER_TIP]
-            cx, cy = int(tip.x * frame.shape[1]), int(tip.y * frame.shape[0])
-            
-            pt_in = np.array([[[cx, cy]]], dtype=np.float32)
-            pt_t = cv2.perspectiveTransform(pt_in, averaged_h_matrix)[0][0]
-            
-            hand_states[0]['pos_history'].append((pt_t[0], pt_t[1]))
-            if len(hand_states[0]['pos_history']) > SMOOTHING_FACTOR: hand_states[0]['pos_history'].pop(0)
+        # --- POINTER LOGIC (ARUCO 2 OR INDEX FINGER) ---
+        pointer_map_pt = None
+        pointer_active = False
+
+        # 1. Check for ArUco 2 first
+        if ids is not None and averaged_h_matrix is not None:
+            flattened_ids = ids.flatten()
+            if 2 in flattened_ids:
+                idx2 = np.where(flattened_ids == 2)[0][0]
+                c2 = corners[idx2][0]
+                # Center of the marker
+                cx2, cy2 = int(c2[:, 0].mean()), int(c2[:, 1].mean())
+                
+                pt_in = np.array([[[cx2, cy2]]], dtype=np.float32)
+                pointer_map_pt = cv2.perspectiveTransform(pt_in, averaged_h_matrix)[0][0]
+                pointer_active = True
+                # Visual feedback on camera frame
+                cv2.circle(frame, (cx2, cy2), 10, (0, 255, 255), -1) 
+
+        # 2. Fallback to MediaPipe if ArUco 2 is not detected
+        if not pointer_active:
+            results = hands.process(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+            if results.multi_hand_landmarks and averaged_h_matrix is not None:
+                hand_lms = results.multi_hand_landmarks[0]
+                mpDraw.draw_landmarks(frame, hand_lms, mpHands.HAND_CONNECTIONS)
+                tip = hand_lms.landmark[mpHands.HandLandmark.INDEX_FINGER_TIP]
+                cx, cy = int(tip.x * frame.shape[1]), int(tip.y * frame.shape[0])
+                
+                pt_in = np.array([[[cx, cy]]], dtype=np.float32)
+                pointer_map_pt = cv2.perspectiveTransform(pt_in, averaged_h_matrix)[0][0]
+                pointer_active = True
+
+        # 3. Process the resulting coordinate for sounds
+        if pointer_active and pointer_map_pt is not None:
+            hand_states[0]['pos_history'].append((pointer_map_pt[0], pointer_map_pt[1]))
+            if len(hand_states[0]['pos_history']) > SMOOTHING_FACTOR: 
+                hand_states[0]['pos_history'].pop(0)
             
             avg_mx, avg_my = np.mean(hand_states[0]['pos_history'], axis=0).astype(int)
-            cv2.circle(map_display, (avg_mx, avg_my), 40, (255, 0, 255), -1) 
+            
+            # Draw pointer on map display (Yellow if ArUco, Magenta if Finger)
+            pointer_color = (0, 255, 255) if pointer_active and (ids is not None and 2 in ids.flatten()) else (255, 0, 255)
+            cv2.circle(map_display, (avg_mx, avg_my), 40, pointer_color, -1) 
 
             detected = None
             if masks and 0 <= avg_my < map_h and 0 <= avg_mx < map_w:
@@ -397,9 +466,13 @@ def run_cv_activity():
 
             if detected != hand_states[0]['last_color']:
                 hand_states[0]['channel'].stop()
-                if detected in FINAL_SOUNDS: hand_states[0]['channel'].play(FINAL_SOUNDS[detected], loops=-1)
+                if detected in FINAL_SOUNDS:
+                    # If it's a caption, play once. If it's a habitat, loop it.
+                    is_looping = -1 if "caption" not in detected else 0
+                    hand_states[0]['channel'].play(FINAL_SOUNDS[detected], loops=is_looping)
                 hand_states[0]['last_color'] = detected
         else:
+            # Nothing detected, stop sound
             hand_states[0]['channel'].stop()
             hand_states[0]['last_color'] = None
 
@@ -477,16 +550,3 @@ if __name__ == "__main__":
     log_selections(selected_indices)
     run_pause_menu()
     run_cv_activity()
-
-
-
-### Calibration Controls
-
-# C: Toggle Calibration Mode On/Off.
-
-# 1, 2, 3, 4: Select which corner to move (1=TL, 2=TR, 3=BR, 4=BL).
-
-# Arrow Keys: Move the selected corner by 1 pixel.
-
-# Shift + Arrows: Move the selected corner by 10 pixels.
-
