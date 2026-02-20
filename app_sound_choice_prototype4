@@ -307,7 +307,8 @@ def run_cv_activity():
             }
         },
         4: {'image': cv2.imread("map_6x4/map_6x4.jpeg"), 'masks': {k: cv2.imread(f"map_6x4/masks/{k}_mask.png", 0) for k in ['blue', 'green', 'red', 'beige']}},
-        27: {'image': cv2.imread("map_coop_id20/map_coop_id20.png"), 'masks': {k: cv2.imread(f"map_coop_id20/masks/{k}_mask.png", 0) for k in ['blue', 'green', 'red', 'beige']}}
+        20: {'image': cv2.imread("map_coop_id20/map_coop_id20.png"), 'masks': {k: cv2.imread(f"map_coop_id20/masks/{k}_mask.png", 0) for k in ['blue', 'green', 'red', 'beige']}},
+        24: {'image': cv2.imread("map_leslie/Frame17_qrcode_outside.png"), 'masks': {k: cv2.imread(f"map_leslie/masks/{k}_mask.png", 0) for k in ['blue', 'green', 'red', 'beige']}}
     }
 
     calib_pts = np.array([[0, 0], [100, 0], [100, 100], [0, 100]], dtype=np.float32)
@@ -362,6 +363,9 @@ def run_cv_activity():
                                 calib_pts = np.array([[map_w-344, 30], [map_w-42, 30], [map_w-42, 338], [map_w-344, 338]], dtype=np.float32)
                             elif m_id in [20, 22, 27]:
                                 calib_pts = np.array([[map_w-535, 580], [map_w-182, 580], [map_w-182, 934], [map_w-535, 934]], dtype=np.float32)
+                            elif m_id in [24]:
+                                calib_pts = np.array([[map_w-173, 11], [map_w-15, 11], [map_w-15, 173], [map_w-173, 173]], dtype=np.float32)
+
 
                     h_curr, _ = cv2.findHomography(corners[i][0], calib_pts)
 
