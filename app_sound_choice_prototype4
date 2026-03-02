@@ -509,13 +509,13 @@ def run_cv_activity():
                     hand_states[0]['channel'].play(FINAL_SOUNDS[detected], loops=is_looping)
                     if "caption" in detected:
                         if "blue" in detected:
-                            hand_states[0]['channel'].queue(FINAL_SOUNDS["blue"], loops=is_looping)
+                            hand_states[0]['channel'].queue(FINAL_SOUNDS["blue"])
                         if "green" in detected:
-                            hand_states[0]['channel'].queue(FINAL_SOUNDS["green"], loops=is_looping)
+                            hand_states[0]['channel'].queue(FINAL_SOUNDS["green"])
                         if "beige" in detected:
-                            hand_states[0]['channel'].queue(FINAL_SOUNDS["beige"], loops=is_looping)
+                            hand_states[0]['channel'].queue(FINAL_SOUNDS["beige"])
                         if "red" in detected:
-                            hand_states[0]['channel'].queue(FINAL_SOUNDS["red"], loops=is_looping)
+                            hand_states[0]['channel'].queue(FINAL_SOUNDS["red"])
 
 
                 hand_states[0]['last_color'] = detected
