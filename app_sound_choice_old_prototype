@@ -93,8 +93,8 @@ SOUND_OPTIONS = {
 MASK_TO_HABITAT = {
     "blue": "Sparse live bottom",
     "green": "Dense live bottom",
-    "red": "Flat sand",        
-    "beige": "Rippled sand"    
+    "beige": "Flat sand",        
+    "red": "Rippled sand"    
 }
 
 HABITATS_ORDER = ["Sparse live bottom", "Dense live bottom", "Flat sand", "Rippled sand"]
@@ -113,8 +113,8 @@ ANIMAL_HABITATS = {
 UI_COLORS = {
     "Sparse live bottom": (95, 254, 201),    # Blue
     "Dense live bottom": (0, 68, 52),     # Green
-    "Flat sand": (254, 89, 84),             # Red
-    "Rippled sand": (252, 229, 185)       # Beige
+    "Rippled sand": (254, 89, 84),             # Red
+    "Flat sand": (252, 229, 185)       # Beige
 }
 
 
@@ -206,8 +206,8 @@ def run_selection_menu():
 
     FINAL_SOUNDS["blue_caption"] = pygame.mixer.Sound("sounds/Habitat_Legend-NarratorONLY-Sparse_Live_Bottom.wav")
     FINAL_SOUNDS["green_caption"] = pygame.mixer.Sound("sounds/Habitat_Legend-NarratorONLY-Dense_Live_Bottom.wav")
-    FINAL_SOUNDS["red_caption"] = pygame.mixer.Sound("sounds/Habitat_Legend-NarratorONLY-Flat_Sand.wav")
-    FINAL_SOUNDS["beige_caption"] = pygame.mixer.Sound("sounds/Habitat_Legend-NarratorONLY-Rippled_Sand.wav")
+    FINAL_SOUNDS["beige_caption"] = pygame.mixer.Sound("sounds/Habitat_Legend-NarratorONLY-Flat_Sand.wav")
+    FINAL_SOUNDS["red_caption"] = pygame.mixer.Sound("sounds/Habitat_Legend-NarratorONLY-Rippled_Sand.wav")
     
     FINAL_SOUNDS["correct"] = pygame.mixer.Sound("sounds/right_2.mp3")
     FINAL_SOUNDS["wrong"] = pygame.mixer.Sound("sounds/wrong.mp3")
@@ -307,8 +307,7 @@ def run_cv_activity():
             }
         },
         4: {'image': cv2.imread("map_6x4/map_6x4.jpeg"), 'masks': {k: cv2.imread(f"map_6x4/masks/{k}_mask.png", 0) for k in ['blue', 'green', 'red', 'beige']}},
-        20: {'image': cv2.imread("map_coop_id20/map_coop_id20.png"), 'masks': {k: cv2.imread(f"map_coop_id20/masks/{k}_mask.png", 0) for k in ['blue', 'green', 'red', 'beige']}},
-        24: {'image': cv2.imread("map_leslie/Frame17_qrcode_outside.png"), 'masks': {k: cv2.imread(f"map_leslie/masks/{k}_mask.png", 0) for k in ['blue', 'green', 'red', 'beige']}}
+        27: {'image': cv2.imread("map_coop_id20/map_coop_id20.png"), 'masks': {k: cv2.imread(f"map_coop_id20/masks/{k}_mask.png", 0) for k in ['blue', 'green', 'red', 'beige']}}
     }
 
     calib_pts = np.array([[0, 0], [100, 0], [100, 100], [0, 100]], dtype=np.float32)
@@ -363,9 +362,6 @@ def run_cv_activity():
                                 calib_pts = np.array([[map_w-344, 30], [map_w-42, 30], [map_w-42, 338], [map_w-344, 338]], dtype=np.float32)
                             elif m_id in [20, 22, 27]:
                                 calib_pts = np.array([[map_w-535, 580], [map_w-182, 580], [map_w-182, 934], [map_w-535, 934]], dtype=np.float32)
-                            elif m_id in [24]:
-                                calib_pts = np.array([[map_w-173, 11], [map_w-15, 11], [map_w-15, 173], [map_w-173, 173]], dtype=np.float32)
-
 
                     h_curr, _ = cv2.findHomography(corners[i][0], calib_pts)
 
@@ -482,58 +478,64 @@ def run_cv_activity():
 
         # Animal detection
         MOVEMENT_THRESHOLD = 25 # Minimum pixels moved to re-trigger sound
-
-        if ids is not None and averaged_h_matrix is not None and masks is not None: 
-            for i, marker_id in enumerate(ids.flatten()):
-                if marker_id in ANIMAL_HABITATS:
-                    # 1. Map Coordinate Calculation
-                    c = corners[i][0]
-                    cx_animal, cy_animal = int(c[:,0].mean()), int(c[:,1].mean())
-                    pt = np.array([[[cx_animal, cy_animal]]], dtype=np.float32)
-                    map_pt = cv2.perspectiveTransform(pt, averaged_h_matrix)[0][0]
-                    mx_animal, my_animal = int(map_pt[0]), int(map_pt[1])
-                    
-                    # 2. Check Habitat Region
-                    current_region = None
-                    if 0 <= my_animal < map_h and 0 <= mx_animal < map_w:
-                        for mask_key, mask_img in masks.items():
-                            if mask_img[my_animal, mx_animal] > 0:
-                                current_region = mask_key
-                                break
-
-                    # 3. Sound & Movement Logic
-                    if current_region:
-                        is_correct = current_region in ANIMAL_HABITATS[marker_id]
-                        status = "correct" if is_correct else "wrong"
+        if not pointer_active:
+            if ids is not None and averaged_h_matrix is not None and masks is not None: 
+                for i, marker_id in enumerate(ids.flatten()):
+                    if marker_id in ANIMAL_HABITATS:
+                        # 1. Map Coordinate Calculation
+                        c = corners[i][0]
+                        cx_animal, cy_animal = int(c[:,0].mean()), int(c[:,1].mean())
+                        pt = np.array([[[cx_animal, cy_animal]]], dtype=np.float32)
+                        map_pt = cv2.perspectiveTransform(pt, averaged_h_matrix)[0][0]
+                        mx_animal, my_animal = int(map_pt[0]), int(map_pt[1])
                         
-                        # Calculate distance from last recorded position
-                        prev_coords = last_animal_coords.get(marker_id)
-                        has_moved_significantly = False
-                        
-                        if prev_coords:
-                            # Euclidean Distance: sqrt((x2-x1)^2 + (y2-y1)^2)
-                            dist = np.linalg.norm(np.array([mx_animal, my_animal]) - np.array(prev_coords))
-                            if dist > MOVEMENT_THRESHOLD:
+                        # 2. Check Habitat Region
+                        current_region = None
+                        if 0 <= my_animal < map_h and 0 <= mx_animal < map_w:
+                            for mask_key, mask_img in masks.items():
+                                if mask_img[my_animal, mx_animal] > 0:
+                                    current_region = mask_key
+                                    break
+
+                        # 3. Sound & Movement Logic
+                        if current_region:
+                            is_correct = current_region in ANIMAL_HABITATS[marker_id]
+                            status = "correct" if is_correct else "wrong"
+                            
+                            # Calculate distance from last recorded position
+                            prev_coords = last_animal_coords.get(marker_id)
+                            has_moved_significantly = False
+                            
+                            if prev_coords:
+                                # Euclidean Distance: sqrt((x2-x1)^2 + (y2-y1)^2)
+                                dist = np.linalg.norm(np.array([mx_animal, my_animal]) - np.array(prev_coords))
+                                if dist > MOVEMENT_THRESHOLD:
+                                    has_moved_significantly = True
+                            else:
                                 has_moved_significantly = True
 
-                        # Play sound if:
-                        # A) Moved significantly OR B) Entered a brand new habitat
-                        if has_moved_significantly or last_animal_position.get(marker_id) != current_region:
-                            # Only play if the channel isn't already busy to avoid "stuttering"
-                            if not ANIMAL_CHANNEL.get_busy(): 
-                                ANIMAL_CHANNEL.play(FINAL_SOUNDS[status])
-                            
-                            # Update persistent state
-                            last_animal_position[marker_id] = current_region
-                            last_animal_coords[marker_id] = (mx_animal, my_animal)
-                    else:
-                        # If animal leaves all habitat zones, clear its history
-                        last_animal_position.pop(marker_id, None)
-                        last_animal_coords.pop(marker_id, None)
+                            # Play sound if:
+                            # A) Moved significantly OR B) Entered a brand new habitat
+                            if has_moved_significantly or last_animal_position.get(marker_id) != current_region:
+                                # Only play if the channel isn't already busy to avoid "stuttering"
+                                if not ANIMAL_CHANNEL.get_busy(): 
+                                    ANIMAL_CHANNEL.play(FINAL_SOUNDS[status])
+                                
+                                # Update persistent state
+                                last_animal_position[marker_id] = current_region
+                                last_animal_coords[marker_id] = (mx_animal, my_animal)
+                        else:
+                            # If animal leaves all habitat zones, clear its history
+                            last_animal_position.pop(marker_id, None)
+                            last_animal_coords.pop(marker_id, None)
 
-                    # 4. Visual Feedback for testing
-                    color = (0, 255, 0) if current_region in ANIMAL_HABITATS[marker_id] else (0, 0, 255)
-                    cv2.circle(map_display, (mx_animal, my_animal), 50, color, 2)
+                        # 4. Visual Feedback for testing
+                        color = (0, 255, 0) if current_region in ANIMAL_HABITATS[marker_id] else (0, 0, 255)
+                        cv2.circle(map_display, (mx_animal, my_animal), 50, color, 2)
+        else:
+            # If hand is visible, we can clear animal history 
+            # so it triggers fresh the moment the hand disappears.
+            last_animal_coords.clear()
 
 
         if map_image is not None:
