@@ -117,6 +117,13 @@ UI_COLORS = {
     "Rippled sand": (252, 229, 185)       # Beige
 }
 
+UI_ASSETS = {
+    "Sparse live bottom": "habitat_illustrations/sparse_live_bottom_illustration.png",
+    "Dense live bottom": "habitat_illustrations/dense_live_bottom_illustration.png",
+    "Flat sand": "habitat_illustrations/flat_sand_illustration.png",
+    "Rippled sand": "habitat_illustrations/rippled_sand_illustration.png"
+}
+
 
 
 # -----------------------------
@@ -128,6 +135,11 @@ def run_selection_menu():
     font = pygame.font.SysFont("Arial", 32)
     small_font = pygame.font.SysFont("Arial", 24)
     italic_font = pygame.font.SysFont("Arial", 24, italic=True)
+
+    UI_IMAGES = {}
+    for name, path in UI_ASSETS.items():
+        img = pygame.image.load(path).convert_alpha()
+        UI_IMAGES[name] = pygame.transform.scale(img, (200, 200))
     
     current_idx = 0
     running = True
@@ -156,9 +168,16 @@ def run_selection_menu():
 
         # 2. DRAW COLOR SQUARE
         # Draws a 100x100 square representing the habitat color
-        rect_color = UI_COLORS.get(hab_name, (255, 255, 255))
-        pygame.draw.rect(screen, rect_color, (600, 200, 100, 100))
-        pygame.draw.rect(screen, (255, 255, 255), (600, 200, 100, 100), 2) # Border
+        # rect_color = UI_COLORS.get(hab_name, (255, 255, 255))
+        # pygame.draw.rect(screen, rect_color, (600, 200, 100, 100))
+        # pygame.draw.rect(screen, (255, 255, 255), (600, 200, 100, 100), 2) # Border
+        # img_path = UI_ASSETS.get(hab_name, "habitat_illustrations/dense_live_bottom_illustration.png"),
+        # raw_img = pygame.image.load(img_path).convert_alpha()
+        # scaled_img = pygame.transform.scale(raw_img, (100, 100))
+        # screen.blit(scaled_img, (600, 200))
+        screen.blit(UI_IMAGES[hab_name], (550, 150))
+        pygame.draw.rect(screen, (255, 255, 255), (550, 150, 200, 200), 2)
+
         
         title = font.render(f"Select Sound for: {hab_name.upper()}", True, (255, 255, 255))
         screen.blit(title, (50, 50))
