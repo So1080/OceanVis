@@ -307,7 +307,19 @@ def run_cv_activity():
             }
         },
         4: {'image': cv2.imread("map_6x4/map_6x4.jpeg"), 'masks': {k: cv2.imread(f"map_6x4/masks/{k}_mask.png", 0) for k in ['blue', 'green', 'red', 'beige']}},
-        20: {'image': cv2.imread("map_coop_id20/map_coop_id20.png"), 'masks': {k: cv2.imread(f"map_coop_id20/masks/{k}_mask.png", 0) for k in ['blue', 'green', 'red', 'beige']}},
+        27: {'image': cv2.imread("map_coop_id20/map_coop_id20.png"), 
+             'masks': {
+                # k: cv2.imread(f"map_coop_id20/masks/{k}_mask.png", 0) for k in ['blue', 'green', 'red', 'beige'],
+                'blue': cv2.imread("map_coop_id20/masks/blue_mask.png", 0),
+                'green': cv2.imread("map_coop_id20/masks/green_mask.png", 0),
+                'red': cv2.imread("map_coop_id20/masks/red_mask.png", 0),
+                'beige': cv2.imread("map_coop_id20/masks/beige_mask.png", 0),
+                'blue_caption': cv2.imread("map_coop_id20/masks/blue_caption.png", 0),
+                'green_caption': cv2.imread("map_coop_id20/masks/green_caption.png", 0),
+                'red_caption': cv2.imread("map_coop_id20/masks/red_caption.png", 0),
+                'beige_caption': cv2.imread("map_coop_id20/masks/beige_caption.png", 0),
+            }
+        },
         24: {'image': cv2.imread("map_leslie/Frame17_qrcode_outside.png"), 'masks': {k: cv2.imread(f"map_leslie/masks/{k}_mask.png", 0) for k in ['blue', 'green', 'red', 'beige']}}
     }
 
@@ -348,6 +360,7 @@ def run_cv_activity():
 
         if ids is not None and not lock_homography:
             for i, m_id in enumerate(ids.flatten()):
+                print(f"an is ID detected: {m_id}")
                 if m_id in MAP_CONFIG:
                     if last_marker_id != m_id:
                         map_image = MAP_CONFIG[m_id]['image']
@@ -365,6 +378,7 @@ def run_cv_activity():
                                 calib_pts = np.array([[map_w-535, 580], [map_w-182, 580], [map_w-182, 934], [map_w-535, 934]], dtype=np.float32)
                             elif m_id in [24]:
                                 calib_pts = np.array([[map_w-173, 11], [map_w-15, 11], [map_w-15, 173], [map_w-173, 173]], dtype=np.float32)
+                        print(f"ID detected: {m_id}")
 
 
                     h_curr, _ = cv2.findHomography(corners[i][0], calib_pts)
@@ -474,6 +488,17 @@ def run_cv_activity():
                     # If it's a caption, play once. If it's a habitat, loop it.
                     is_looping = -1 if "caption" not in detected else 0
                     hand_states[0]['channel'].play(FINAL_SOUNDS[detected], loops=is_looping)
+                    if "caption" in detected:
+                        if "blue" in detected:
+                            hand_states[0]['channel'].queue(FINAL_SOUNDS["blue"], loops=is_looping)
+                        if "green" in detected:
+                            hand_states[0]['channel'].queue(FINAL_SOUNDS["green"], loops=is_looping)
+                        if "beige" in detected:
+                            hand_states[0]['channel'].queue(FINAL_SOUNDS["beige"], loops=is_looping)
+                        if "red" in detected:
+                            hand_states[0]['channel'].queue(FINAL_SOUNDS["red"], loops=is_looping)
+
+
                 hand_states[0]['last_color'] = detected
         else:
             # Nothing detected, stop sound
