@@ -186,7 +186,7 @@ def run_selection_menu():
             status_txt = "Listening to description... Press [R] to skip"
             status_color = (255, 165, 0)
         else:
-            status_txt = "Press [1, 2, 3] to Listen | [ENTER] to Confirm"
+            status_txt = "Press [1, 2, 3] to Listen | [D] for description | [ENTER] to Confirm"
             status_color = (0, 200, 255)
         
         for i in range(3):
@@ -203,10 +203,20 @@ def run_selection_menu():
             if event.type == pygame.QUIT:
                 pygame.quit(); exit()
             if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_d:
+                    pygame.mixer.stop()
+                    pygame.mixer.Sound(DESCRIPTIONS[hab_name]).play()
+                    is_description_playing = True
                 if event.key == pygame.K_r:
                     pygame.mixer.stop()
                     is_description_playing = False
                     pygame.mixer.Sound(SOUND_OPTIONS[hab_name][0]).play()
+                if event.key == pygame.K_o:
+                    pygame.mixer.stop()
+                    for hab in  HABITATS_ORDER:
+                        selected_indices[hab] = 1
+                    current_idx = last_hab_idx
+                    running = False
                 if not is_description_playing:
                     if event.key in [pygame.K_1, pygame.K_2, pygame.K_3]:
                         val = int(event.unicode) - 1
