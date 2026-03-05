@@ -77,24 +77,26 @@ SOUND_OPTIONS = {
         "Sounds_VF/COMPLEX/HabitatSynthSounds v4 C Short Loop - Dense Live Bottom.wav",
         "Sounds_VF/SPEECH_US_v1_x8_REPEATS/Dense-x8-100percent-USA_v1.aif"
     ],
-    "Flat sand": [
-        "Sounds_VF/BASIC_v3/BASIC-BASIC-flat-sand-8bars-v3.wav",
-        "Sounds_VF/COMPLEX/HabitatSynthSounds v4 C Short Loop - Flat Sand.wav",
-        "Sounds_VF/SPEECH_US_v1_x8_REPEATS/Flat-x8-100percent-USA_v1.aif"
-    ],
     "Rippled sand": [
         "Sounds_VF/BASIC_v3/BASIC-BASIC-rippled-sand-8bars-v3.wav",
         "Sounds_VF/COMPLEX/HabitatSynthSounds v4 C Short Loop - Rippled Sand.wav",
         "Sounds_VF/SPEECH_US_v1_x8_REPEATS/Rippled-x8-100percent-USA_v1.aif"
+    ],
+    "Flat sand": [
+        "Sounds_VF/BASIC_v3/BASIC-BASIC-flat-sand-8bars-v3.wav",
+        "Sounds_VF/COMPLEX/HabitatSynthSounds v4 C Short Loop - Flat Sand.wav",
+        "Sounds_VF/SPEECH_US_v1_x8_REPEATS/Flat-x8-100percent-USA_v1.aif"
     ]
+    
 }
 
 # UPDATED: Mask mapping to match your hardware/map setup
 MASK_TO_HABITAT = {
     "blue": "Sparse live bottom",
     "green": "Dense live bottom",
-    "red": "Flat sand",        
-    "beige": "Rippled sand"    
+    "beige": "Rippled sand",
+    "red": "Flat sand"     
+       
 }
 
 HABITATS_ORDER = ["Sparse live bottom", "Dense live bottom", "Flat sand", "Rippled sand"]
@@ -113,15 +115,15 @@ ANIMAL_HABITATS = {
 UI_COLORS = {
     "Sparse live bottom": (95, 254, 201),    # Blue
     "Dense live bottom": (0, 68, 52),     # Green
-    "Flat sand": (254, 89, 84),             # Red
-    "Rippled sand": (252, 229, 185)       # Beige
+    "Rippled sand": (252, 229, 185),       # Beige
+    "Flat sand": (254, 89, 84),             # Red    
 }
 
 UI_ASSETS = {
     "Sparse live bottom": "habitat_illustrations/sparse_live_bottom_illustration.png",
     "Dense live bottom": "habitat_illustrations/dense_live_bottom_illustration.png",
-    "Flat sand": "habitat_illustrations/flat_sand_illustration.png",
-    "Rippled sand": "habitat_illustrations/rippled_sand_illustration.png"
+    "Rippled sand": "habitat_illustrations/rippled_sand_illustration.png",
+    "Flat sand": "habitat_illustrations/flat_sand_illustration.png"    
 }
 
 
