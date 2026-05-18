@@ -90,7 +90,6 @@ SOUND_OPTIONS = {
     
 }
 
-# UPDATED: Mask mapping to match your hardware/map setup
 MASK_TO_HABITAT = {
     "blue": "Sparse live bottom",
     "green": "Dense live bottom",
@@ -163,7 +162,6 @@ def run_selection_menu():
         # 1. AUTO-PLAY DESCRIPTION (Speech)
         if current_idx != last_hab_idx:
             pygame.mixer.stop()
-            # Plays the 3rd index (the speech file) from your SOUND_OPTIONS
             description_sound = pygame.mixer.Sound(DESCRIPTIONS[hab_name])
             description_sound.play()
             is_description_playing = True
@@ -175,8 +173,6 @@ def run_selection_menu():
 
         screen.fill((30, 30, 30))
 
-        # 2. DRAW COLOR SQUARE
-        # Draws a 100x100 square representing the habitat color
         # rect_color = UI_COLORS.get(hab_name, (255, 255, 255))
         # pygame.draw.rect(screen, rect_color, (600, 200, 100, 100))
         # pygame.draw.rect(screen, (255, 255, 255), (600, 200, 100, 100), 2) # Border
@@ -464,9 +460,7 @@ def run_cv_activity():
         # DRAW BLUE MAP BOUNDARY ON CAMERA VIEW
         if averaged_h_matrix is not None and map_image is not None:
             try:
-                # The boundary represents the outer edge of your digital map image [0,0] to [w,h]
                 map_outline = np.float32([[0, 0], [map_w, 0], [map_w, map_h], [0, map_h]]).reshape(-1, 1, 2)
-                # Invert the homography to project map coordinates back onto the camera frame
                 h_inv = cv2.invert(averaged_h_matrix)[1]
                 cam_outline = cv2.perspectiveTransform(map_outline, h_inv)
                 cv2.polylines(frame, [np.int32(cam_outline)], True, (255, 0, 0), 3) # BLUE DELIMITATION
@@ -477,10 +471,10 @@ def run_cv_activity():
 
         # Initialize map_display
         if map_image is not None:
-            # OPTION A: Start with a black background (Masks will appear isolated)
+            # OPTION A: black background
             # map_display = np.zeros_like(map_image)
             
-            # OPTION B: Un-comment below if you'd rather have a dimmed map background instead of black
+            # OPTION B: dimmed map background
             map_display = cv2.convertScaleAbs(map_image, alpha=0.15, beta=0) 
 
             # Only layer on the masks that are currently active
@@ -493,15 +487,11 @@ def run_cv_activity():
                             # Extract only the habitat region from the original vibrant map
                             habitat_region = cv2.bitwise_and(map_image, map_image, mask=current_mask)
                             
-                            # Combine it onto our map_display canvas
                             map_display = cv2.bitwise_or(map_display, habitat_region)
                             
-                # Optional: Always draw captions if they exist, regardless of habitat state
                 for mask_key, mask_img in masks.items():
                     if "caption" in mask_key and mask_img is not None:
-                        # Find the base color parent name (e.g., 'blue' from 'blue_caption')
                         base_color = mask_key.replace("_caption", "")
-                        # Only show caption if its corresponding habitat is active
                         if active_habitats.get(base_color, False):
                             caption_region = cv2.bitwise_and(map_image, map_image, mask=mask_img)
                             map_display = cv2.bitwise_or(map_display, caption_region)
@@ -555,7 +545,7 @@ def run_cv_activity():
             
             avg_mx, avg_my = np.mean(hand_states[0]['pos_history'], axis=0).astype(int)
             
-            # Draw pointer on map display (Yellow if ArUco, Magenta if Finger)
+            # Draw pointer on map display (Yellow if boat, Magenta if Finger)
             pointer_color = (0, 255, 255) if pointer_active and (ids is not None and 2 in ids.flatten()) else (255, 0, 255)
             cv2.circle(map_display, (avg_mx, avg_my), 40, pointer_color, -1) 
 
@@ -571,7 +561,6 @@ def run_cv_activity():
                 if detected in FINAL_SOUNDS:
                     # Determine if we should play the sound
                     is_caption = "caption" in detected
-                    # Get the base color (e.g., 'blue' from 'blue_caption')
                     base_color = detected.replace("_caption", "")
                     
                     # PLAY if: It's a caption OR it's an active habitat
@@ -644,7 +633,6 @@ def run_cv_activity():
                         # Play sound if:
                         # A) Moved significantly OR B) Entered a brand new habitat
                         if has_moved_significantly or last_animal_position.get(marker_id) != current_region:
-                            # Only play if the channel isn't already busy to avoid "stuttering"
                             if not ANIMAL_CHANNEL.get_busy(): 
                                 ANIMAL_CHANNEL.play(FINAL_SOUNDS[status])
                             
