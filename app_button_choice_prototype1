@@ -351,7 +351,7 @@ def run_cv_activity():
                 'beige_caption': cv2.imread("craved_map3/masks/beige_caption.png", 0),
             }
         },
-        4: {'image': cv2.imread("map_6x4/map_6x4.jpeg"), 'masks': {k: cv2.imread(f"map_6x4/masks/{k}_mask.png", 0) for k in ['blue', 'green', 'red', 'beige']}},
+        4: {'image': cv2.imread("map_6x4/map_bare_6x4.jpeg"), 'masks': {k: cv2.imread(f"map_6x4/masks/{k}_mask.png", 0) for k in ['blue', 'green', 'red', 'beige']}},
         27: {'image': cv2.imread("map_coop_id20/map_coop_id20.png"), 
              'masks': {
                 # k: cv2.imread(f"map_coop_id20/masks/{k}_mask.png", 0) for k in ['blue', 'green', 'red', 'beige'],
@@ -473,7 +473,40 @@ def run_cv_activity():
             except: 
                 pass
 
-        map_display = map_image.copy() if map_image is not None else np.zeros((480, 854, 3), dtype=np.uint8)
+        # map_display = map_image.copy() if map_image is not None else np.zeros((480, 854, 3), dtype=np.uint8)
+
+        # Initialize map_display
+        if map_image is not None:
+            # OPTION A: Start with a black background (Masks will appear isolated)
+            # map_display = np.zeros_like(map_image)
+            
+            # OPTION B: Un-comment below if you'd rather have a dimmed map background instead of black
+            map_display = cv2.convertScaleAbs(map_image, alpha=0.15, beta=0) 
+
+            # Only layer on the masks that are currently active
+            if masks is not None:
+                for mask_key, is_active in active_habitats.items():
+                    if is_active and mask_key in masks:
+                        current_mask = masks[mask_key]
+                        
+                        if current_mask is not None:
+                            # Extract only the habitat region from the original vibrant map
+                            habitat_region = cv2.bitwise_and(map_image, map_image, mask=current_mask)
+                            
+                            # Combine it onto our map_display canvas
+                            map_display = cv2.bitwise_or(map_display, habitat_region)
+                            
+                # Optional: Always draw captions if they exist, regardless of habitat state
+                for mask_key, mask_img in masks.items():
+                    if "caption" in mask_key and mask_img is not None:
+                        # Find the base color parent name (e.g., 'blue' from 'blue_caption')
+                        base_color = mask_key.replace("_caption", "")
+                        # Only show caption if its corresponding habitat is active
+                        if active_habitats.get(base_color, False):
+                            caption_region = cv2.bitwise_and(map_image, map_image, mask=mask_img)
+                            map_display = cv2.bitwise_or(map_display, caption_region)
+        else:
+            map_display = np.zeros((480, 854, 3), dtype=np.uint8)
 
         if calibration_mode:
             for idx, pt in enumerate(calib_pts):
