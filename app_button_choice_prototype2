@@ -1,0 +1,647 @@
+import cv2
+import cv2.aruco as aruco
+import numpy as np
+import mediapipe as mp
+import pygame
+import os
+import time
+
+import csv
+from datetime import datetime
+
+# -----------------------------
+# 0. DATA COLLECTION
+# -----------------------------
+
+LOG_DIR = "study_logs"
+
+def log_selections(selected_indices):
+
+    if not os.path.exists(LOG_DIR):
+        os.makedirs(LOG_DIR)
+        print(f"Created directory: {LOG_DIR}")
+    
+    date_str = datetime.now().strftime("%Y-%m-%d")
+    filename = os.path.join(LOG_DIR, f"selections_{date_str}.csv")
+    
+    file_exists = os.path.isfile(filename)
+    
+    user_id = datetime.now().strftime("%H%M%S")
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    with open(filename, mode='a', newline='') as file:
+        writer = csv.writer(file)
+        
+        # Write header if new file
+        if not file_exists:
+            writer.writerow(["Timestamp", "User_ID", "Sparse_Live_Bottom", "Dense_Live_Bottom", "Flat_Sand", "Rippled_Sand"])
+        
+        # Write the data row
+        writer.writerow([
+            timestamp,
+            user_id,
+            selected_indices["Sparse live bottom"],
+            selected_indices["Dense live bottom"],
+            selected_indices["Flat sand"],
+            selected_indices["Rippled sand"]
+        ])
+    print(f"Data logged successfully to {filename}")
+
+# -----------------------------
+# 1. SETUP & ASSET DEFINITIONS
+# -----------------------------
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+pygame.init()
+pygame.mixer.init()
+
+MAX_HANDS = 4 
+HAND_CHANNELS = [pygame.mixer.Channel(i) for i in range(MAX_HANDS)]
+ANIMAL_CHANNEL = pygame.mixer.Channel(MAX_HANDS) 
+
+DESCRIPTIONS = {
+    "Sparse live bottom": "sounds/Habitat_Legend-NarratorONLY-Sparse_Live_Bottom.wav",
+    "Dense live bottom": "sounds/Habitat_Legend-NarratorONLY-Dense_Live_Bottom.wav",
+    "Rippled sand": "sounds/Habitat_Legend-NarratorONLY-Rippled_Sand.wav",
+    "Flat sand": "sounds/Habitat_Legend-NarratorONLY-Flat_Sand.wav",
+}
+
+SOUND_OPTIONS = {
+    "Sparse live bottom": [
+        "Sounds_VF/BASIC_v3/BASIC-BASIC-sparse-live-8bars.wav",
+        "Sounds_VF/COMPLEX/HabitatSynthSounds v4 C Short Loop - Sparse Live Bottom.wav",
+        "Sounds_VF/SPEECH_US_v1_x8_REPEATS/Sparse-x8-100percent-USA_v1.aif"
+    ],
+    "Dense live bottom": [
+        "Sounds_VF/BASIC_v3/BASIC-BASIC-dense-live-8bars-v3.wav",
+        "Sounds_VF/COMPLEX/HabitatSynthSounds v4 C Short Loop - Dense Live Bottom.wav",
+        "Sounds_VF/SPEECH_US_v1_x8_REPEATS/Dense-x8-100percent-USA_v1.aif"
+    ],
+    "Rippled sand": [
+        "Sounds_VF/BASIC_v3/BASIC-BASIC-rippled-sand-8bars-v3.wav",
+        "Sounds_VF/COMPLEX/HabitatSynthSounds v4 C Short Loop - Rippled Sand.wav",
+        "Sounds_VF/SPEECH_US_v1_x8_REPEATS/Rippled-x8-100percent-USA_v1.aif"
+    ],
+    "Flat sand": [
+        "Sounds_VF/BASIC_v3/BASIC-BASIC-flat-sand-8bars-v3.wav",
+        "Sounds_VF/COMPLEX/HabitatSynthSounds v4 C Short Loop - Flat Sand.wav",
+        "Sounds_VF/SPEECH_US_v1_x8_REPEATS/Flat-x8-100percent-USA_v1.aif"
+    ]
+}
+
+MASK_TO_HABITAT = {
+    "blue": "Sparse live bottom",
+    "green": "Dense live bottom",
+    "beige": "Rippled sand",
+    "red": "Flat sand"     
+}
+
+HABITATS_ORDER = ["Sparse live bottom", "Dense live bottom", "Flat sand", "Rippled sand"]
+selected_indices = {h: 0 for h in HABITATS_ORDER}
+FINAL_SOUNDS = {}
+
+# Animal → allowed habitat
+ANIMAL_HABITATS = {
+    3: ["blue"], #anemone
+    5: ["green"], #turtle
+    6: ["red", "beige"], #ray
+    7: ["green","blue"], #shark
+    8: ["red","beige"], #shell
+}
+
+UI_COLORS = {
+    "Sparse live bottom": (95, 254, 201),    # Blue
+    "Dense live bottom": (0, 68, 52),     # Green
+    "Rippled sand": (252, 229, 185),       # Beige
+    "Flat sand": (254, 89, 84),             # Red    
+}
+
+UI_ASSETS = {
+    "Sparse live bottom": "habitat_illustrations/sparse_live_bottom_illustration.png",
+    "Dense live bottom": "habitat_illustrations/dense_live_bottom_illustration.png",
+    "Rippled sand": "habitat_illustrations/rippled_sand_illustration.png",
+    "Flat sand": "habitat_illustrations/flat_sand_illustration.png"    
+}
+
+KEY_MAP = {
+    ord('1'): "blue",
+    ord('2'): "green",
+    ord('3'): "red",
+    ord('4'): "beige"
+}
+
+# -----------------------------
+# PHASE 1: SELECTION MENU
+# -----------------------------
+def run_selection_menu():
+    screen = pygame.display.set_mode((800, 500))
+    pygame.display.set_caption("Habitat Sound Selection")
+    font = pygame.font.SysFont("Arial", 32)
+    small_font = pygame.font.SysFont("Arial", 24)
+    italic_font = pygame.font.SysFont("Arial", 24, italic=True)
+
+    UI_IMAGES = {}
+    for name, path in UI_ASSETS.items():
+        img = pygame.image.load(path).convert_alpha()
+        UI_IMAGES[name] = pygame.transform.scale(img, (200, 200))
+    
+    current_idx = 0
+    running = True
+
+    last_hab_idx = -1
+    is_description_playing = False
+    
+    while running:
+        hab_name = HABITATS_ORDER[current_idx]
+
+        if current_idx != last_hab_idx:
+            pygame.mixer.stop()
+            description_sound = pygame.mixer.Sound(DESCRIPTIONS[hab_name])
+            description_sound.play()
+            is_description_playing = True
+            last_hab_idx = current_idx
+
+        if not pygame.mixer.get_busy():
+            pygame.mixer.Sound(SOUND_OPTIONS[hab_name][0]).play()
+            is_description_playing = False
+
+        screen.fill((30, 30, 30))
+        screen.blit(UI_IMAGES[hab_name], (550, 150))
+        pygame.draw.rect(screen, (255, 255, 255), (550, 150, 200, 200), 2)
+        
+        title = font.render(f"Select Sound for: {hab_name.upper()}", True, (255, 255, 255))
+        screen.blit(title, (50, 50))
+
+        if is_description_playing:
+            status_txt = "Listening to description... Press [R] to skip"
+            status_color = (255, 165, 0)
+        else:
+            status_txt = "Press [1, 2, 3] to Listen | [D] for description | [ENTER] to Confirm"
+            status_color = (0, 200, 255)
+        
+        for i in range(3):
+            text_color = (100, 100, 100) if is_description_playing else (150, 150, 150)
+            text_color = (243, 164, 16) if not is_description_playing and selected_indices[hab_name] == i else (150, 150, 150)
+            txt = f"Option {i+1}" + ("  <-- Playing" if not is_description_playing and selected_indices[hab_name] == i else "")
+            txt_font = italic_font if not is_description_playing and selected_indices[hab_name] == i else small_font
+            screen.blit(txt_font.render(txt, True, text_color), (100, 150 + (i * 60)))
+            
+        screen.blit(small_font.render(status_txt, True, status_color), (50, 400))
+        pygame.display.flip()
+        
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit(); exit()
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_d:
+                    pygame.mixer.stop()
+                    pygame.mixer.Sound(DESCRIPTIONS[hab_name]).play()
+                    is_description_playing = True
+                if event.key == pygame.K_r:
+                    pygame.mixer.stop()
+                    is_description_playing = False
+                    pygame.mixer.Sound(SOUND_OPTIONS[hab_name][0]).play()
+                if event.key == pygame.K_o:
+                    pygame.mixer.stop()
+                    for hab in HABITATS_ORDER:
+                        selected_indices[hab] = 1
+                    current_idx = last_hab_idx
+                    running = False
+                if not is_description_playing:
+                    if event.key in [pygame.K_1, pygame.K_2, pygame.K_3]:
+                        val = int(event.unicode) - 1
+                        selected_indices[hab_name] = val
+                        pygame.mixer.stop()
+                        pygame.mixer.Sound(SOUND_OPTIONS[hab_name][val]).play()
+                    if event.key == pygame.K_RETURN:
+                        pygame.mixer.stop()
+                        if current_idx < len(HABITATS_ORDER) - 1: 
+                            current_idx += 1
+                        else: running = False
+
+    for mask_key, hab_name in MASK_TO_HABITAT.items():
+        FINAL_SOUNDS[mask_key] = pygame.mixer.Sound(SOUND_OPTIONS[hab_name][selected_indices[hab_name]])
+
+    FINAL_SOUNDS["blue_caption"] = pygame.mixer.Sound("sounds/Habitat_Legend-NarratorONLY-Sparse_Live_Bottom.wav")
+    FINAL_SOUNDS["green_caption"] = pygame.mixer.Sound("sounds/Habitat_Legend-NarratorONLY-Dense_Live_Bottom.wav")
+    FINAL_SOUNDS["red_caption"] = pygame.mixer.Sound("sounds/Habitat_Legend-NarratorONLY-Flat_Sand.wav")
+    FINAL_SOUNDS["beige_caption"] = pygame.mixer.Sound("sounds/Habitat_Legend-NarratorONLY-Rippled_Sand.wav")
+    
+    FINAL_SOUNDS["correct"] = pygame.mixer.Sound("sounds/right_2.mp3")
+    FINAL_SOUNDS["wrong"] = pygame.mixer.Sound("sounds/wrong.mp3")
+    pygame.display.quit()
+
+# -----------------------------
+# PHASE 2: PAUSE
+# -----------------------------
+def run_pause_menu():
+    screen = pygame.display.set_mode((800, 500))
+    pygame.display.set_caption("PAUSE")
+    font = pygame.font.SysFont("Arial", 32)
+
+    small_font = pygame.font.SysFont("Arial", 24)
+    running = True
+    while running:
+        screen.fill((30, 30, 30))        
+        title = font.render(f"Thank you for selecting the sounds!", True, (255, 255, 255))
+        screen.blit(title, (50, 100))
+        screen.blit(small_font.render("Please let the researcher know you are done with the first part", True, (255, 255, 255)), (50, 200))
+        screen.blit(small_font.render("Researcher: Press [Q]", True, (255, 255, 255)), (300, 400))
+        pygame.display.flip()
+
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                    pygame.quit(); exit()
+            if event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_q:
+                        running = False
+    pygame.display.quit()
+
+
+# -----------------------------
+# PHASE 3: COMPUTER VISION
+# -----------------------------
+def run_cv_activity():
+    cap = cv2.VideoCapture(0)
+    time.sleep(1.0)
+
+    if not cap.isOpened():
+        print("Error: Could not open camera. Trying index 0...")
+        cap = cv2.VideoCapture(0)
+        if not cap.isOpened(): return
+        
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+    
+    SMOOTHING_FACTOR = 8 
+    ALPHA = 0.2  
+
+    ARUCO_DICT = aruco.getPredefinedDictionary(aruco.DICT_4X4_50)
+    PARAMS = aruco.DetectorParameters()
+    mpHands = mp.solutions.hands
+    hands = mpHands.Hands(max_num_hands=MAX_HANDS, min_detection_confidence=0.7)
+    mpDraw = mp.solutions.drawing_utils
+
+    active_habitats = {
+        "blue": True,
+        "green": True,
+        "red": True,
+        "beige": True
+    }
+
+    MAP_CONFIG = {
+        11: {
+            'image': cv2.imread("craved_map/craved_map1.jpeg"), 
+            'masks': {
+                'blue': cv2.imread("craved_map/masks/blue_mask.png", 0),
+                'green': cv2.imread("craved_map/masks/green_mask.png", 0),
+                'red': cv2.imread("craved_map/masks/red_mask.png", 0),
+                'beige': cv2.imread("craved_map/masks/beige_mask.png", 0),
+                'blue_caption': cv2.imread("craved_map/masks/blue_caption.png", 0),
+                'green_caption': cv2.imread("craved_map/masks/green_caption.png", 0),
+                'red_caption': cv2.imread("craved_map/masks/red_caption.png", 0),
+                'beige_caption': cv2.imread("craved_map/masks/beige_caption.png", 0),
+            }
+        },
+        9: {
+            'image': cv2.imread("craved_map2/Frame 7_id9.png"), 
+            'masks': {
+                'blue': cv2.imread("craved_map2/masks/blue_mask.png", 0),
+                'green': cv2.imread("craved_map2/masks/green_mask.png", 0),
+                'red': cv2.imread("craved_map2/masks/red_mask.png", 0),
+                'beige': cv2.imread("craved_map2/masks/beige_mask.png", 0),
+                'blue_caption': cv2.imread("craved_map2/masks/blue_caption.png", 0),
+                'green_caption': cv2.imread("craved_map2/masks/green_caption.png", 0),
+                'red_caption': cv2.imread("craved_map2/masks/red_caption.png", 0),
+                'beige_caption': cv2.imread("craved_map2/masks/beige_caption.png", 0),
+            }
+        },
+        3: {
+            'image': cv2.imread("craved_map3/Frame 8_id8.png"), 
+            'masks': {
+                'blue': cv2.imread("craved_map3/masks/blue_mask.png", 0),
+                'green': cv2.imread("craved_map3/masks/green_mask.png", 0),
+                'red': cv2.imread("craved_map3/masks/red_mask.png", 0),
+                'beige': cv2.imread("craved_map3/masks/beige_mask.png", 0),
+                'blue_caption': cv2.imread("craved_map3/masks/blue_caption.png", 0),
+                'green_caption': cv2.imread("craved_map3/masks/green_caption.png", 0),
+                'red_caption': cv2.imread("craved_map3/masks/red_caption.png", 0),
+                'beige_caption': cv2.imread("craved_map3/masks/beige_caption.png", 0),
+            }
+        },
+        4: {'image': cv2.imread("map_6x4/map_bare_6x4.jpeg"), 'masks': {k: cv2.imread(f"map_6x4/masks/{k}_mask.png", 0) for k in ['blue', 'green', 'red', 'beige']}},
+        27: {'image': cv2.imread("map_coop_id20/map_coop_id20.png"), 
+             'masks': {
+                'blue': cv2.imread("map_coop_id20/masks/blue_mask.png", 0),
+                'green': cv2.imread("map_coop_id20/masks/green_mask.png", 0),
+                'red': cv2.imread("map_coop_id20/masks/red_mask.png", 0),
+                'beige': cv2.imread("map_coop_id20/masks/beige_mask.png", 0),
+                'blue_caption': cv2.imread("map_coop_id20/masks/blue_caption.png", 0),
+                'green_caption': cv2.imread("map_coop_id20/masks/green_caption.png", 0),
+                'red_caption': cv2.imread("map_coop_id20/masks/red_caption.png", 0),
+                'beige_caption': cv2.imread("map_coop_id20/masks/beige_caption.png", 0),
+            }
+        },
+        24: {'image': cv2.imread("map_leslie/Frame17_qrcode_outside.png"), 'masks': {k: cv2.imread(f"map_leslie/masks/{k}_mask.png", 0) for k in ['blue', 'green', 'red', 'beige']}}
+    }
+
+    calib_pts = np.array([[0, 0], [100, 0], [100, 100], [0, 100]], dtype=np.float32)
+    selected_corner = 0
+    calibration_mode = False
+    lock_homography = False
+    
+    map_image = None
+    masks = None
+    map_h = map_w = 0
+    averaged_h_matrix = None
+    last_marker_id = None
+    hand_states = {0: {'last_color': None, 'channel': HAND_CHANNELS[0], 'pos_history': []}}
+
+    print("\n--- CV CONTROLS ---")
+    print("[L] Lock & Print Coords | [R] Refresh Homography")
+    print("[C] Calibration Mode | [1-4] Select Corner | [WASD/Arrows] Move")
+    print("[ESC] Exit\n")
+
+    last_animal_position = {}
+    last_animal_coords = {}
+
+    # Setup Independent Named Windows
+    cv2.namedWindow("Calibration View", cv2.WINDOW_NORMAL)
+    cv2.namedWindow("Tabletop Projection", cv2.WINDOW_NORMAL)
+    
+    # TIP: If you want the tabletop display completely borderless for clean projection:
+    # cv2.setWindowProperty("Tabletop Projection", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            cv2.waitKey(10)
+            continue
+        
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        corners, ids, _ = aruco.detectMarkers(gray, ARUCO_DICT, parameters=PARAMS)
+
+        if ids is not None:
+            for corner in corners:
+                cv2.cornerSubPix(gray, corner, winSize=(5, 5), zeroZone=(-1, -1), 
+                                 criteria=(cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.1))
+
+        if ids is not None and not lock_homography:
+            for i, m_id in enumerate(ids.flatten()):
+                if m_id in MAP_CONFIG:
+                    if last_marker_id != m_id:
+                        map_image = MAP_CONFIG[m_id]['image']
+                        masks = MAP_CONFIG[m_id]['masks']
+                        map_h, map_w, _ = map_image.shape
+                        last_marker_id = m_id
+                        
+                        if not calibration_mode:
+                            if m_id in [3, 9, 11]:
+                                size = 490 if m_id != 11 else 277
+                                calib_pts = np.array([[map_w-size, 0], [map_w, 0], [map_w, size], [map_w-size, size]], dtype=np.float32)
+                            elif m_id in [4, 21]:
+                                calib_pts = np.array([[map_w-344, 30], [map_w-42, 30], [map_w-42, 338], [map_w-344, 338]], dtype=np.float32)
+                            elif m_id in [20, 22, 27]:
+                                calib_pts = np.array([[map_w-535, 580], [map_w-182, 580], [map_w-182, 934], [map_w-535, 934]], dtype=np.float32)
+                            elif m_id in [24]:
+                                calib_pts = np.array([[map_w-173, 11], [map_w-15, 11], [map_w-15, 173], [map_w-173, 173]], dtype=np.float32)
+                        print(f"ID detected: {m_id}")
+
+                    h_curr, _ = cv2.findHomography(corners[i][0], calib_pts)
+
+                    if h_curr is not None:
+                        if averaged_h_matrix is None:
+                            averaged_h_matrix = h_curr
+                        else:
+                            averaged_h_matrix = cv2.addWeighted(averaged_h_matrix, (1.0 - ALPHA), h_curr, ALPHA, 0)
+                    
+                    cv2.polylines(frame, [corners[i][0].astype(int)], True, (0, 255, 0), 2)
+                    break
+
+        key = cv2.waitKey(1) & 0xFF
+        if key == 27: break
+        elif key == ord('l'):
+            lock_homography = not lock_homography
+            print(f"\n[COORDINATES] ID {last_marker_id}: {calib_pts.tolist()}")
+        elif key == ord('r'):
+            averaged_h_matrix = None
+            print("[RESET] History cleared.")
+        elif key == ord('c'):
+            calibration_mode = not calibration_mode
+
+        if key in KEY_MAP:
+            target_hab = KEY_MAP[key]
+            active_habitats[target_hab] = not active_habitats[target_hab]
+            print(f"Habitat {target_hab} is now {'ON' if active_habitats[target_hab] else 'OFF'}")
+
+        if calibration_mode:
+            if key in [ord('1'), ord('2'), ord('3'), ord('4')]:
+                selected_corner = int(chr(key)) - 1
+            if key == 82 or key == ord('w'): calib_pts[selected_corner][1] -= 2 
+            if key == 84 or key == ord('s'): calib_pts[selected_corner][1] += 2
+            if key == 81 or key == ord('a'): calib_pts[selected_corner][0] -= 2
+            if key == 83 or key == ord('d'): calib_pts[selected_corner][0] += 2
+
+        # DRAW BLUE MAP BOUNDARY ON CAMERA VIEW
+        if averaged_h_matrix is not None and map_image is not None:
+            try:
+                map_outline = np.float32([[0, 0], [map_w, 0], [map_w, map_h], [0, map_h]]).reshape(-1, 1, 2)
+                h_inv = cv2.invert(averaged_h_matrix)[1]
+                cam_outline = cv2.perspectiveTransform(map_outline, h_inv)
+                cv2.polylines(frame, [np.int32(cam_outline)], True, (255, 0, 0), 3) 
+            except: 
+                pass
+
+        # Build dynamic tabletop visualization
+        if map_image is not None:
+            map_display = cv2.convertScaleAbs(map_image, alpha=0.15, beta=0) 
+
+            if masks is not None:
+                for mask_key, is_active in active_habitats.items():
+                    if is_active and mask_key in masks:
+                        current_mask = masks[mask_key]
+                        if current_mask is not None:
+                            if current_mask.shape[:2] != map_image.shape[:2]:
+                                current_mask = cv2.resize(current_mask, (map_w, map_h), interpolation=cv2.INTER_NEAREST)
+                            # habitat_region = cv2.bitwise_and(map_image, map_image, mask=current_mask)
+                            # map_display = cv2.bitwise_or(map_display, habitat_region)
+                            # --- FIX: Create a colored layer instead of pulling from the bare map ---
+                            # Get RGB from UI_COLORS, map it to the habitat name, and swap to BGR for OpenCV
+                            hab_name = MASK_TO_HABITAT[mask_key]
+                            rgb_color = UI_COLORS[hab_name]
+                            bgr_color = (rgb_color[2], rgb_color[1], rgb_color[0])
+                            
+                            # Create a solid color canvas matching the map's size
+                            color_layer = np.zeros_like(map_image)
+                            color_layer[:] = bgr_color
+                            
+                            # Mask the solid color layer
+                            habitat_region = cv2.bitwise_and(color_layer, color_layer, mask=current_mask)
+                            map_display = cv2.bitwise_or(map_display, habitat_region)
+                            # ------------------------------------------------------------------------
+                            
+                for mask_key, mask_img in masks.items():
+                    if "caption" in mask_key and mask_img is not None:
+                        base_color = mask_key.replace("_caption", "")
+                        if active_habitats.get(base_color, False):
+                            if mask_img.shape[:2] != map_image.shape[:2]:
+                                mask_img = cv2.resize(mask_img, (map_w, map_h), interpolation=cv2.INTER_NEAREST)
+                            # caption_region = cv2.bitwise_and(map_image, map_image, mask=mask_img)
+                            # map_display = cv2.bitwise_or(map_display, caption_region)
+                            # Keep captions readable by forcing them to render as solid white
+                            white_layer = np.zeros_like(map_image)
+                            white_layer[:] = (255, 255, 255)
+                            
+                            caption_region = cv2.bitwise_and(white_layer, white_layer, mask=mask_img)
+                            map_display = cv2.bitwise_or(map_display, caption_region)
+        else:
+            map_display = np.zeros((480, 854, 3), dtype=np.uint8)
+
+        if calibration_mode:
+            for idx, pt in enumerate(calib_pts):
+                color = (0, 255, 0) if idx == selected_corner else (0, 0, 255)
+                size = 12 if idx == selected_corner else 6
+                cv2.circle(map_display, (int(pt[0]), int(pt[1])), size, color, -1)
+            cv2.putText(frame, "CALIBRATION ACTIVE", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+
+        # --- POINTER LOGIC (ARUCO 2 OR INDEX FINGER) ---
+        pointer_map_pt = None
+        pointer_active = False
+
+        if ids is not None and averaged_h_matrix is not None:
+            flattened_ids = ids.flatten()
+            if 2 in flattened_ids:
+                idx2 = np.where(flattened_ids == 2)[0][0]
+                c2 = corners[idx2][0]
+                cx2, cy2 = int(c2[:, 0].mean()), int(c2[:, 1].mean())
+                
+                pt_in = np.array([[[cx2, cy2]]], dtype=np.float32)
+                pointer_map_pt = cv2.perspectiveTransform(pt_in, averaged_h_matrix)[0][0]
+                pointer_active = True
+                cv2.circle(frame, (cx2, cy2), 10, (0, 255, 255), -1) 
+
+        if not pointer_active:
+            results = hands.process(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+            if results.multi_hand_landmarks and averaged_h_matrix is not None:
+                hand_lms = results.multi_hand_landmarks[0]
+                mpDraw.draw_landmarks(frame, hand_lms, mpHands.HAND_CONNECTIONS)
+                tip = hand_lms.landmark[mpHands.HandLandmark.INDEX_FINGER_TIP]
+                cx, cy = int(tip.x * frame.shape[1]), int(tip.y * frame.shape[0])
+                
+                pt_in = np.array([[[cx, cy]]], dtype=np.float32)
+                pointer_map_pt = cv2.perspectiveTransform(pt_in, averaged_h_matrix)[0][0]
+                pointer_active = True
+
+        if pointer_active and pointer_map_pt is not None:
+            hand_states[0]['pos_history'].append((pointer_map_pt[0], pointer_map_pt[1]))
+            if len(hand_states[0]['pos_history']) > SMOOTHING_FACTOR: 
+                hand_states[0]['pos_history'].pop(0)
+            
+            avg_mx, avg_my = np.mean(hand_states[0]['pos_history'], axis=0).astype(int)
+            
+            pointer_color = (0, 255, 255) if pointer_active and (ids is not None and 2 in ids.flatten()) else (255, 0, 255)
+            cv2.circle(map_display, (avg_mx, avg_my), 40, pointer_color, -1) 
+
+            detected = None
+            if masks and 0 <= avg_my < map_h and 0 <= avg_mx < map_w:
+                for key_m, mask_m in masks.items():
+                    if mask_m[avg_my, avg_mx] > 0:
+                        detected = key_m; break
+
+            if detected != hand_states[0]['last_color']:
+                hand_states[0]['channel'].stop()
+
+                if detected in FINAL_SOUNDS:
+                    is_caption = "caption" in detected
+                    base_color = detected.replace("_caption", "")
+                    
+                    if is_caption or active_habitats.get(base_color, False):
+                        is_looping = -1 if not is_caption else 0
+                        hand_states[0]['channel'].play(FINAL_SOUNDS[detected], loops=is_looping)
+                        
+                        if is_caption and active_habitats.get(base_color, False):
+                            hand_states[0]['channel'].queue(FINAL_SOUNDS[base_color])
+
+                    hand_states[0]['last_color'] = detected
+        else:
+            hand_states[0]['channel'].stop()
+            hand_states[0]['last_color'] = None
+
+        # Animal detection
+        MOVEMENT_THRESHOLD = 25 
+
+        if ids is not None and averaged_h_matrix is not None and masks is not None: 
+            for i, marker_id in enumerate(ids.flatten()):
+                if marker_id in ANIMAL_HABITATS:
+                    c = corners[i][0]
+                    cx_animal, cy_animal = int(c[:,0].mean()), int(c[:,1].mean())
+                    pt = np.array([[[cx_animal, cy_animal]]], dtype=np.float32)
+                    map_pt = cv2.perspectiveTransform(pt, averaged_h_matrix)[0][0]
+                    mx_animal, my_animal = int(map_pt[0]), int(map_pt[1])
+                    
+                    current_region = None
+                    if 0 <= my_animal < map_h and 0 <= mx_animal < map_w:
+                        for mask_key, mask_img in masks.items():
+                            if mask_img[my_animal, mx_animal] > 0:
+                                current_region = mask_key
+                                break
+
+                    if current_region:
+                        is_correct = current_region in ANIMAL_HABITATS[marker_id]
+                        status = "correct" if is_correct else "wrong"
+                        
+                        prev_coords = last_animal_coords.get(marker_id)
+                        has_moved_significantly = False
+                        
+                        if prev_coords:
+                            dist = np.linalg.norm(np.array([mx_animal, my_animal]) - np.array(prev_coords))
+                            if dist > MOVEMENT_THRESHOLD:
+                                has_moved_significantly = True
+
+                        if has_moved_significantly or last_animal_position.get(marker_id) != current_region:
+                            if not ANIMAL_CHANNEL.get_busy(): 
+                                ANIMAL_CHANNEL.play(FINAL_SOUNDS[status])
+                            
+                            last_animal_position[marker_id] = current_region
+                            last_animal_coords[marker_id] = (mx_animal, my_animal)
+                    else:
+                        last_animal_position.pop(marker_id, None)
+                        last_animal_coords.pop(marker_id, None)
+
+                    color = (0, 255, 0) if current_region in ANIMAL_HABITATS[marker_id] else (0, 0, 255)
+                    cv2.circle(map_display, (mx_animal, my_animal), 50, color, 2)
+
+        for i, (hab, is_on) in enumerate(active_habitats.items()):
+            indicator_color = UI_COLORS[MASK_TO_HABITAT[hab]] 
+            indicator_color = (indicator_color[2], indicator_color[1], indicator_color[0])
+            pos = (60, 100 + (i * 120))
+            
+            thickness = -1 if is_on else 3
+            cv2.circle(map_display, pos, 25, indicator_color, thickness)
+            cv2.circle(map_display, pos, 25, (255, 255, 255), 2)
+            cv2.putText(map_display, hab.capitalize(), (pos[0]+50, pos[1]+30), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 3, (255, 255, 255), 5)
+            
+        # -----------------------------
+        # OUTPUT PROCESSING & SEPARATED WINDOWS
+        # -----------------------------
+        f_h, f_w, _ = frame.shape
+        scale = 720 / f_h
+        resized_camera_feed = cv2.resize(frame, (int(f_w * scale), 720))
+        
+        if map_image is not None:
+            resized_tabletop_view = cv2.resize(map_display, (int(map_w * (720 / map_h)), 720))
+        else:
+            resized_tabletop_view = np.zeros((720, 1280, 3), dtype=np.uint8)
+
+        # Draw to separate desktop windows
+        cv2.imshow("Calibration View", resized_camera_feed)
+        cv2.imshow("Tabletop Projection", resized_tabletop_view)
+
+    cap.release()
+    cv2.destroyAllWindows()
+
+if __name__ == "__main__":
+    run_selection_menu()
+    log_selections(selected_indices)
+    run_pause_menu()
+    run_cv_activity()
