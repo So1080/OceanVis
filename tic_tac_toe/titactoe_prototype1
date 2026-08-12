@@ -1,0 +1,439 @@
+import cv2
+import cv2.aruco as aruco
+import numpy as np
+import mediapipe as mp
+import pygame
+import time
+import os
+
+# -------------------------------------------------------------------
+# 1. CONFIGURATION & COLOR DEFINITIONS
+# -------------------------------------------------------------------
+COLOR_HSV_RANGES = {
+    "Sparse live bottom": (np.array([80, 50, 100]), np.array([100, 255, 255])),
+    "Rippled sand":      (np.array([10, 80, 50]),   np.array([25, 255, 180])),
+    "Flat sand":          (np.array([15, 30, 120]),  np.array([35, 150, 245])),
+    "Dense live bottom":  (np.array([85, 50, 40]),   np.array([105, 255, 130]))
+}
+
+TARGET_HABITAT = "Rippled sand"
+
+# Initialize Pygame Audio Engine with dedicated channels
+pygame.mixer.pre_init(44100, -16, 2, 512)
+pygame.init()
+pygame.mixer.init()
+pygame.mixer.set_num_channels(16)
+
+# Separate habitat sound channel and evaluation sound channel
+HABITAT_CHANNEL = pygame.mixer.Channel(0)
+EVAL_CHANNEL = pygame.mixer.Channel(1)
+
+HABITAT_SOUND_PATHS = {
+    "Sparse live bottom": "Sounds_VF/BASIC_v3/BASIC-BASIC-sparse-live-8bars.wav",
+    "Rippled sand":       "Sounds_VF/BASIC_v3/BASIC-BASIC-rippled-sand-8bars-v3.wav",
+    "Flat sand":          "Sounds_VF/BASIC_v3/BASIC-BASIC-flat-sand-8bars-v3.wav",
+    "Dense live bottom":  "Sounds_VF/BASIC_v3/BASIC-BASIC-dense-live-8bars-v3.wav",
+    "correct":            "sounds/right_2.mp3",
+    "wrong":              "sounds/wrong.mp3"
+}
+
+LOADED_SOUNDS = {}
+print("\n--- AUDIO INITIALIZATION CHECK ---")
+for key, path in HABITAT_SOUND_PATHS.items():
+    if os.path.exists(path):
+        try:
+            LOADED_SOUNDS[key] = pygame.mixer.Sound(path)
+            print(f"[SUCCESS] Loaded sound for '{key}': {path}")
+        except Exception as e:
+            print(f"[ERROR] Could not load sound file for '{key}': {e}")
+    else:
+        print(f"[WARNING] Sound file NOT FOUND for '{key}': {os.path.abspath(path)}")
+print("-----------------------------------\n")
+
+def detect_cube_color(crop_bgr):
+    if crop_bgr is None or crop_bgr.size == 0:
+        return "Unknown"
+        
+    hsv = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2HSV)
+    max_pixels = 0
+    detected_habitat = "Unknown"
+
+    for habitat_name, (lower, upper) in COLOR_HSV_RANGES.items():
+        mask = cv2.inRange(hsv, lower, upper)
+        count = cv2.countNonZero(mask)
+        if count > max_pixels and count > (crop_bgr.shape[0] * crop_bgr.shape[1] * 0.15):
+            max_pixels = count
+            detected_habitat = habitat_name
+
+    return detected_habitat
+
+def get_camera_stream():
+    for idx in [1, 0, 2]:
+        cap = cv2.VideoCapture(idx)
+        if cap.isOpened():
+            ret, frame = cap.read()
+            if ret and frame is not None:
+                print(f"Connected to Camera Index {idx}")
+                return cap
+            cap.release()
+    return None
+
+# -------------------------------------------------------------------
+# 2. MAIN APPLICATION
+# -------------------------------------------------------------------
+def main():
+    cap = get_camera_stream()
+    if cap is None:
+        print("Error: Could not open camera feed.")
+        return
+
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+
+    aruco_dict = aruco.getPredefinedDictionary(aruco.DICT_4X4_100)
+    aruco_params = aruco.DetectorParameters()
+
+    mp_hands = mp.solutions.hands
+    hands = mp_hands.Hands(max_num_hands=2, min_detection_confidence=0.5, min_tracking_confidence=0.5)
+    mp_draw = mp.solutions.drawing_utils
+
+    # State Variables
+    finger_was_touching = False
+    has_been_touched_this_cycle = False
+    pending_eval = False
+    release_time = 0
+
+    DEBOUNCE_DELAY = 1.0  # Pause delay after finger leaves before checking right/wrong
+    current_status_msg = "Touch the cube to hear its map habitat."
+    status_color = (255, 255, 255)
+
+    while cap.isOpened():
+        ret, frame = cap.read()
+        if not ret or frame is None:
+            time.sleep(0.5)
+            continue
+
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        corners, ids, _ = aruco.detectMarkers(gray, aruco_dict, parameters=aruco_params)
+
+        pt1, pt2 = None, None
+
+        if ids is not None:
+            aruco.drawDetectedMarkers(frame, corners, ids)
+            for i, marker_id in enumerate(ids.flatten()):
+                c = corners[i][0]
+                if marker_id == 45:
+                    pt1 = (int(c[:, 0].mean()), int(c[:, 1].mean()))
+                elif marker_id == 57:
+                    pt2 = (int(c[:, 0].mean()), int(c[:, 1].mean()))
+
+        # Hand Detection
+        results = hands.process(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+        finger_tips = []
+
+        if results.multi_hand_landmarks:
+            for hand_lms in results.multi_hand_landmarks:
+                mp_draw.draw_landmarks(frame, hand_lms, mp_hands.HAND_CONNECTIONS)
+                tip = hand_lms.landmark[mp_hands.HandLandmark.INDEX_FINGER_TIP]
+                fx, fy = int(tip.x * frame.shape[1]), int(tip.y * frame.shape[0])
+                finger_tips.append((fx, fy))
+                cv2.circle(frame, (fx, fy), 8, (255, 0, 255), -1)
+
+        # Region Processing
+        if pt1 and pt2:
+            x1, x2 = min(pt1[0], pt2[0]), max(pt1[0], pt2[0])
+            y1, y2 = min(pt1[1], pt2[1]), max(pt1[1], pt2[1])
+            
+            cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 0, 0), 2)
+
+            cube_x1 = int(x1 + (x2 - x1) * 0.35)
+            cube_y1 = int(y1 + (y2 - y1) * 0.35)
+            cube_x2 = int(x1 + (x2 - x1) * 0.65)
+            cube_y2 = int(y1 + (y2 - y1) * 0.65)
+
+            cv2.rectangle(frame, (cube_x1, cube_y1), (cube_x2, cube_y2), (0, 255, 255), 2)
+            cube_crop = frame[cube_y1:cube_y2, cube_x1:cube_x2]
+
+            finger_touching_cube = False
+            for (fx, fy) in finger_tips:
+                if cube_x1 <= fx <= cube_x2 and cube_y1 <= fy <= cube_y2:
+                    finger_touching_cube = True
+                    cv2.circle(frame, (fx, fy), 14, (0, 255, 0), -1)
+
+            now = time.time()
+
+            # --- EVENT 1: FINGER TOUCHES CUBE ---
+            if finger_touching_cube and not finger_was_touching:
+                has_been_touched_this_cycle = True
+                pending_eval = False  # Reset any queued evaluation from previous touches
+
+                # Play target habitat audio looping continuously while touched
+                if TARGET_HABITAT in LOADED_SOUNDS:
+                    HABITAT_CHANNEL.play(LOADED_SOUNDS[TARGET_HABITAT], loops=-1)
+                
+                current_status_msg = f"Listening to habitat: {TARGET_HABITAT}"
+                status_color = (255, 255, 0)
+
+            # --- EVENT 2: FINGER LEAVES CUBE ---
+            elif not finger_touching_cube and finger_was_touching:
+                # Stop habitat audio immediately when finger is removed
+                HABITAT_CHANNEL.stop()
+
+                if has_been_touched_this_cycle:
+                    release_time = now
+                    pending_eval = True  # Queue evaluation once debounce completes
+                    current_status_msg = "Checking choice..."
+                    status_color = (200, 200, 200)
+
+            # --- EVENT 3: EVALUATION (Runs ONCE after finger leaves & debounce finishes) ---
+            if pending_eval and (now - release_time > DEBOUNCE_DELAY):
+                pending_eval = False
+                has_been_touched_this_cycle = False  # Require new physical touch to run again
+
+                detected_color = detect_cube_color(cube_crop)
+                if detected_color == TARGET_HABITAT:
+                    current_status_msg = f"CORRECT: Matched {TARGET_HABITAT}!"
+                    status_color = (0, 255, 0)
+                    if "correct" in LOADED_SOUNDS:
+                        EVAL_CHANNEL.play(LOADED_SOUNDS["correct"])
+                else:
+                    current_status_msg = f"INCORRECT: Facing {detected_color}, target is {TARGET_HABITAT}"
+                    status_color = (0, 0, 255)
+                    if "wrong" in LOADED_SOUNDS:
+                        EVAL_CHANNEL.play(LOADED_SOUNDS["wrong"])
+
+            finger_was_touching = finger_touching_cube
+        else:
+            cv2.putText(frame, "Waiting for ArUco IDs 45 and 57...", (30, 90), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 165, 255), 2)
+
+        cv2.putText(frame, current_status_msg, (30, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.8, status_color, 2)
+        cv2.imshow("Aquarium Exhibit Prototype", frame)
+
+        if cv2.waitKey(1) & 0xFF == 27:
+            break
+
+    cap.release()
+    cv2.destroyAllWindows()
+
+if __name__ == "__main__":
+    main()
+
+
+# #old version: plays sound of habitat with finger, correct/incorrect sound after 2 seconds of no touch, with debounce
+
+# import cv2
+# import cv2.aruco as aruco
+# import numpy as np
+# import mediapipe as mp
+# import pygame
+# import time
+# import os
+
+# # -------------------------------------------------------------------
+# # 1. CONFIGURATION & COLOR DEFINITIONS
+# # -------------------------------------------------------------------
+# COLOR_HSV_RANGES = {
+#     "Sparse live bottom": (np.array([80, 50, 100]), np.array([100, 255, 255])),
+#     "Rippled sand":      (np.array([10, 80, 50]),   np.array([25, 255, 180])),
+#     "Flat sand":          (np.array([15, 30, 120]),  np.array([35, 150, 245])),
+#     "Dense live bottom":  (np.array([85, 50, 40]),   np.array([105, 255, 130]))
+# }
+
+# TARGET_HABITAT = "Rippled sand"
+
+# # Initialize Pygame Audio Engine with explicit channels
+# pygame.mixer.pre_init(44100, -16, 2, 512)
+# pygame.init()
+# pygame.mixer.init()
+# pygame.mixer.set_num_channels(16)
+
+# HABITAT_SOUND_PATHS = {
+#     "Sparse live bottom": "Sounds_VF/BASIC_v3/BASIC-BASIC-sparse-live-8bars.wav",
+#     "Rippled sand":       "Sounds_VF/BASIC_v3/BASIC-BASIC-rippled-sand-8bars-v3.wav",
+#     "Flat sand":          "Sounds_VF/BASIC_v3/BASIC-BASIC-flat-sand-8bars-v3.wav",
+#     "Dense live bottom":  "Sounds_VF/BASIC_v3/BASIC-BASIC-dense-live-8bars-v3.wav",
+#     "correct":            "sounds/right_2.mp3",
+#     "wrong":              "sounds/wrong.mp3"
+# }
+
+# LOADED_SOUNDS = {}
+# print("\n--- AUDIO INITIALIZATION CHECK ---")
+# for key, path in HABITAT_SOUND_PATHS.items():
+#     if os.path.exists(path):
+#         try:
+#             LOADED_SOUNDS[key] = pygame.mixer.Sound(path)
+#             print(f"[SUCCESS] Loaded sound for '{key}': {path}")
+#         except Exception as e:
+#             print(f"[ERROR] Could not load sound file for '{key}': {e}")
+#     else:
+#         print(f"[WARNING] Sound file NOT FOUND for '{key}': {os.path.abspath(path)}")
+# print("-----------------------------------\n")
+
+# def play_sound_safe(sound_key):
+#     """Directly plays sound on any free channel."""
+#     if sound_key in LOADED_SOUNDS:
+#         try:
+#             LOADED_SOUNDS[sound_key].play()
+#             print(f"-> PLAYING AUDIO: {sound_key}")
+#         except Exception as e:
+#             print(f"Failed to play sound '{sound_key}': {e}")
+
+# def detect_cube_color(crop_bgr):
+#     if crop_bgr is None or crop_bgr.size == 0:
+#         return "Unknown"
+        
+#     hsv = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2HSV)
+#     max_pixels = 0
+#     detected_habitat = "Unknown"
+
+#     for habitat_name, (lower, upper) in COLOR_HSV_RANGES.items():
+#         mask = cv2.inRange(hsv, lower, upper)
+#         count = cv2.countNonZero(mask)
+#         if count > max_pixels and count > (crop_bgr.shape[0] * crop_bgr.shape[1] * 0.15):
+#             max_pixels = count
+#             detected_habitat = habitat_name
+
+#     return detected_habitat
+
+# def get_camera_stream():
+#     for idx in [1, 0, 2]:
+#         cap = cv2.VideoCapture(idx)
+#         if cap.isOpened():
+#             ret, frame = cap.read()
+#             if ret and frame is not None:
+#                 print(f"Connected to Camera Index {idx}")
+#                 return cap
+#             cap.release()
+#     return None
+
+# # -------------------------------------------------------------------
+# # 2. MAIN APPLICATION
+# # -------------------------------------------------------------------
+# def main():
+#     cap = get_camera_stream()
+#     if cap is None:
+#         print("Error: Could not open camera feed.")
+#         return
+
+#     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+#     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+
+#     aruco_dict = aruco.getPredefinedDictionary(aruco.DICT_4X4_100)
+#     aruco_params = aruco.DetectorParameters()
+
+#     mp_hands = mp.solutions.hands
+#     hands = mp_hands.Hands(max_num_hands=2, min_detection_confidence=0.5, min_tracking_confidence=0.5)
+#     mp_draw = mp.solutions.drawing_utils
+
+#     last_eval_time = time.time()
+#     last_touch_time = 0
+#     last_sound_trigger_time = 0
+#     finger_was_touching = False
+#     cube_touched_at_least_once = False
+#     current_status_msg = "Touch the cube to hear its map habitat."
+#     status_color = (255, 255, 255)
+
+#     DEBOUNCE_DELAY = 1.5
+#     EVAL_INTERVAL = 2.0
+#     TOUCH_COOLDOWN = 1.0
+
+#     while cap.isOpened():
+#         ret, frame = cap.read()
+#         if not ret or frame is None:
+#             time.sleep(0.5)
+#             continue
+
+#         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+#         corners, ids, _ = aruco.detectMarkers(gray, aruco_dict, parameters=aruco_params)
+
+#         pt1, pt2 = None, None
+
+#         if ids is not None:
+#             aruco.drawDetectedMarkers(frame, corners, ids)
+#             for i, marker_id in enumerate(ids.flatten()):
+#                 c = corners[i][0]
+#                 if marker_id == 45:
+#                     pt1 = (int(c[:, 0].mean()), int(c[:, 1].mean()))
+#                 elif marker_id == 57:
+#                     pt2 = (int(c[:, 0].mean()), int(c[:, 1].mean()))
+
+#         # Hand Detection
+#         results = hands.process(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+#         finger_tips = []
+
+#         if results.multi_hand_landmarks:
+#             for hand_lms in results.multi_hand_landmarks:
+#                 mp_draw.draw_landmarks(frame, hand_lms, mp_hands.HAND_CONNECTIONS)
+#                 tip = hand_lms.landmark[mp_hands.HandLandmark.INDEX_FINGER_TIP]
+#                 fx, fy = int(tip.x * frame.shape[1]), int(tip.y * frame.shape[0])
+#                 finger_tips.append((fx, fy))
+#                 # Purple dot by default
+#                 cv2.circle(frame, (fx, fy), 8, (255, 0, 255), -1)
+
+#         # Region Processing
+#         if pt1 and pt2:
+#             # FIX 1: Normalize coordinates so bounding box math is order-independent
+#             x1, x2 = min(pt1[0], pt2[0]), max(pt1[0], pt2[0])
+#             y1, y2 = min(pt1[1], pt2[1]), max(pt1[1], pt2[1])
+            
+#             cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 0, 0), 2)
+
+#             cube_x1 = int(x1 + (x2 - x1) * 0.35)
+#             cube_y1 = int(y1 + (y2 - y1) * 0.35)
+#             cube_x2 = int(x1 + (x2 - x1) * 0.65)
+#             cube_y2 = int(y1 + (y2 - y1) * 0.65)
+
+#             cv2.rectangle(frame, (cube_x1, cube_y1), (cube_x2, cube_y2), (0, 255, 255), 2)
+#             cube_crop = frame[cube_y1:cube_y2, cube_x1:cube_x2]
+
+#             finger_touching_cube = False
+#             for (fx, fy) in finger_tips:
+#                 if cube_x1 <= fx <= cube_x2 and cube_y1 <= fy <= cube_y2:
+#                     finger_touching_cube = True
+#                     # Turn green when correctly registered inside the cube box
+#                     cv2.circle(frame, (fx, fy), 14, (0, 255, 0), -1)
+
+#             now = time.time()
+
+#             if finger_touching_cube and (not finger_was_touching or (now - last_sound_trigger_time > TOUCH_COOLDOWN)):
+#                 cube_touched_at_least_once = True
+#                 last_sound_trigger_time = now
+
+#                 play_sound_safe(TARGET_HABITAT)
+#                 current_status_msg = f"Playing target sound: {TARGET_HABITAT}"
+#                 status_color = (255, 255, 0)
+
+#             if not finger_touching_cube and finger_was_touching:
+#                 last_touch_time = now
+
+#             finger_was_touching = finger_touching_cube
+
+#             # Periodic Answer Evaluation
+#             if (now - last_touch_time > DEBOUNCE_DELAY) and (now - last_eval_time > EVAL_INTERVAL):
+#                 last_eval_time = now
+#                 if cube_touched_at_least_once:
+#                     detected_color = detect_cube_color(cube_crop)
+#                     if detected_color == TARGET_HABITAT:
+#                         current_status_msg = f"CORRECT: Matched {TARGET_HABITAT}!"
+#                         status_color = (0, 255, 0)
+#                         play_sound_safe("correct")
+#                     else:
+#                         current_status_msg = f"INCORRECT: Facing {detected_color}, target is {TARGET_HABITAT}"
+#                         status_color = (0, 0, 255)
+#                         play_sound_safe("wrong")
+#         else:
+#             cv2.putText(frame, "Waiting for ArUco IDs 45 and 57...", (30, 90), 
+#                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 165, 255), 2)
+
+#         cv2.putText(frame, current_status_msg, (30, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.8, status_color, 2)
+#         cv2.imshow("Aquarium Exhibit Prototype", frame)
+
+#         if cv2.waitKey(1) & 0xFF == 27:
+#             break
+
+#     cap.release()
+#     cv2.destroyAllWindows()
+
+# if __name__ == "__main__":
+#     main()
